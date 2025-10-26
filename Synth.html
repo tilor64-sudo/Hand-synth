@@ -1,0 +1,1579 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport"
+      content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no"/>
+<title>microHand v4 (stable)</title>
+
+<style>
+:root {
+  --bg:#000;
+  --fg:#9fffe0;
+  --panel:#111;
+  --accent:#39ffa8;
+  --danger:#ff397a;
+  --line:#39ffa8;
+  --muted:#444;
+  --radius:1rem;
+  --pad:0.75rem;
+  --gap:0.75rem;
+  --font:"Courier New", monospace;
+}
+*{
+  box-sizing:border-box;
+  -webkit-tap-highlight-color:transparent;
+  margin:0;
+  padding:0;
+}
+body{
+  background:var(--bg);
+  color:var(--fg);
+  font-family:var(--font);
+  overflow:hidden;
+  width:100vw;
+  height:100vh;
+  display:flex;
+  flex-direction:column;
+}
+.hidden { display:none !important; }
+
+/* TOP BAR */
+#topBar{
+  flex:0 0 auto;
+  display:flex;
+  flex-wrap:wrap;
+  align-items:flex-start;
+  justify-content:space-between;
+  padding:var(--pad);
+  background:linear-gradient(#0a0a0a,#000);
+  border-bottom:1px solid var(--muted);
+  font-size:0.8rem;
+  row-gap:0.5rem;
+}
+#titleBlock{
+  display:flex;
+  flex-direction:column;
+  line-height:1.1rem;
+}
+#titleBlock .main{
+  color:var(--accent);
+  font-weight:bold;
+  font-size:0.9rem;
+  letter-spacing:0.05em;
+}
+#titleBlock .sub{
+  color:var(--fg);
+  opacity:0.6;
+  font-size:0.7rem;
+}
+#audioBtn{
+  background:var(--accent);
+  color:#000;
+  font-weight:bold;
+  border:0;
+  border-radius:var(--radius);
+  padding:0.5rem 0.75rem;
+  font-size:0.8rem;
+  align-self:flex-start;
+}
+
+/* ERROR OVERLAY */
+#fatalErrorOverlay{
+  position:fixed;
+  top:0;left:0;
+  width:100%;
+  background:#300;
+  color:#fff;
+  font-family:var(--font);
+  font-size:0.8rem;
+  line-height:1.2rem;
+  padding:0.75rem;
+  text-align:left;
+  white-space:pre-wrap;
+  z-index:99999;
+  border-bottom:2px solid #f00;
+  display:none;
+}
+
+/* MAIN SPLIT */
+#mainArea{
+  flex:1 1 auto;
+  min-height:0;
+  display:flex;
+  flex-direction:row;
+  gap:var(--gap);
+  padding:var(--pad);
+}
+
+/* LEFT CAMERA / HUD */
+#visionPane{
+  position:relative;
+  flex:1 1 55%;
+  min-width:0;
+  background:#050505;
+  border:1px solid var(--muted);
+  border-radius:var(--radius);
+  overflow:hidden;
+}
+#videoEl{
+  position:absolute;
+  top:0;left:0;
+  width:100%;
+  height:100%;
+  object-fit:cover;
+  transform:scaleX(-1);
+  filter:blur(2px) brightness(0.4)
+          contrast(1.2) saturate(1.2);
+}
+#handCanvas{
+  position:absolute;
+  top:0;left:0;
+  width:100%;
+  height:100%;
+  pointer-events:none;
+}
+#camStatus{
+  position:absolute;
+  top:0;
+  left:0;
+  background:rgba(0,0,0,0.6);
+  color:var(--danger);
+  font-size:0.7rem;
+  padding:0.4rem 0.6rem;
+  border-bottom-right-radius:var(--radius);
+  border-bottom:1px solid var(--muted);
+  border-right:1px solid var(--muted);
+  pointer-events:none;
+  white-space:pre-line;
+  max-width:70%;
+  line-height:1rem;
+}
+#hud{
+  position:absolute;
+  left:0;
+  bottom:0;
+  width:100%;
+  background:rgba(0,0,0,0.6);
+  color:var(--accent);
+  font-size:0.65rem;
+  line-height:1rem;
+  padding:0.5rem 0.5rem 0.75rem;
+  font-family:var(--font);
+  border-top:1px solid var(--muted);
+}
+#hud b{color:var(--danger);}
+#noteReadout{
+  font-size:0.8rem;
+  color:var(--accent);
+  font-weight:bold;
+  line-height:1.2rem;
+}
+
+/* RIGHT PANELS */
+#ctrlPane{
+  flex:0 0 45%;
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+  gap:var(--gap);
+  overflow-y:auto;
+  -webkit-overflow-scrolling:touch;
+  padding-right:0.25rem;
+}
+.panel{
+  background:var(--panel);
+  border:1px solid var(--muted);
+  border-radius:var(--radius);
+  padding:var(--pad);
+  min-width:0;
+}
+.panel h2{
+  font-size:0.8rem;
+  letter-spacing:0.07em;
+  color:var(--accent);
+  margin-bottom:0.5rem;
+  font-weight:bold;
+  text-transform:uppercase;
+  border-bottom:1px solid var(--muted);
+  padding-bottom:0.5rem;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+}
+.panelRow{
+  display:flex;
+  flex-wrap:wrap;
+  gap:var(--gap);
+  font-size:0.7rem;
+}
+.ctrl{
+  flex:1 1 45%;
+  min-width:40%;
+  display:flex;
+  flex-direction:column;
+  color:var(--fg);
+}
+.ctrl label{
+  font-size:0.7rem;
+  margin-bottom:0.25rem;
+  color:var(--fg);
+  display:flex;
+  justify-content:space-between;
+}
+.ctrl label span.value{
+  color:var(--accent);
+  margin-left:0.5rem;
+}
+.ctrl input[type=range]{
+  width:100%;
+  -webkit-appearance:none;
+  height:4px;
+  background:var(--muted);
+  border-radius:2px;
+  outline:none;
+}
+.ctrl input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;
+  width:14px;
+  height:14px;
+  border-radius:50%;
+  background:var(--accent);
+}
+.ctrl select,
+.ctrl input[type=checkbox]{
+  background:#000;
+  border:1px solid var(--muted);
+  border-radius:0.5rem;
+  color:var(--fg);
+  font-family:var(--font);
+  font-size:0.7rem;
+  padding:0.4rem;
+  width:100%;
+}
+
+/* Scrollbar style */
+#ctrlPane::-webkit-scrollbar{width:4px;}
+#ctrlPane::-webkit-scrollbar-track{background:#000;}
+#ctrlPane::-webkit-scrollbar-thumb{background:var(--accent);}
+
+/* MOBILE STACK */
+@media(max-width:800px){
+  #mainArea{flex-direction:column;}
+  #visionPane,#ctrlPane{
+    flex:1 1 auto;
+    min-height:40vh;
+  }
+}
+</style>
+</head>
+<body>
+
+<!-- fatal JS errors will show up here -->
+<div id="fatalErrorOverlay"></div>
+
+<div id="topBar">
+  <div id="titleBlock">
+    <div class="main">microHand v4</div>
+    <div class="sub">hand pitch/gate • face macro filter • arpeggiator • delay</div>
+  </div>
+
+  <button id="audioBtn">ENABLE AUDIO / CAM</button>
+</div>
+
+<div id="mainArea">
+  <div id="visionPane">
+    <video id="videoEl" autoplay playsinline muted></video>
+    <canvas id="handCanvas"></canvas>
+    <div id="camStatus">CAMERA: waiting for tap…</div>
+
+    <div id="hud">
+      <div id="noteReadout">NOTE: -- Hz</div>
+      <div>
+        Pinch = gate<br/>
+        Hand height = pitch (Octave shifts base)<br/>
+        Spread = brightness → CUTOFF base<br/>
+        Push toward cam = RESONANCE base<br/>
+        Face left/right = extra CUTOFF sweep<br/>
+        Mouth open = extra RESONANCE (talkbox-ish)<br/>
+        Arp runs while gate is held
+      </div>
+    </div>
+  </div>
+
+  <div id="ctrlPane">
+
+    <!-- PROGRAM / TIMBRE -->
+    <div class="panel">
+      <h2>
+        PROGRAM / TIMBRE
+        <span style="color:var(--danger);font-size:0.7rem;">micro vibe</span>
+      </h2>
+      <div class="panelRow">
+
+        <div class="ctrl">
+          <label>PROGRAM</label>
+          <select id="programSelect">
+            <option value="bassGrowl">Bass Growl</option>
+            <option value="polySweep">Poly Sweep</option>
+            <option value="noisyLead">Noisy Lead</option>
+          </select>
+        </div>
+
+        <div class="ctrl">
+          <label>OSC1 Wave</label>
+          <select id="osc1Wave">
+            <option value="sawtooth">Saw</option>
+            <option value="square">Square</option>
+            <option value="triangle">Tri</option>
+            <option value="sine">Sine</option>
+          </select>
+        </div>
+
+        <div class="ctrl">
+          <label>OSC2 Wave</label>
+          <select id="osc2Wave">
+            <option value="square">Square</option>
+            <option value="sawtooth">Saw</option>
+            <option value="triangle">Tri</option>
+            <option value="sine">Sine</option>
+          </select>
+        </div>
+
+        <div class="ctrl">
+          <label>OSC2 Detune
+            <span class="value" id="detuneVal">5c</span>
+          </label>
+          <input id="osc2Detune"
+                 type="range"
+                 min="-50" max="50" step="1" value="5"/>
+        </div>
+
+        <div class="ctrl">
+          <label>OSC Mix
+            <span class="value" id="mixVal">0.5</span>
+          </label>
+          <input id="oscMix"
+                 type="range"
+                 min="0" max="1" step="0.01" value="0.5"/>
+        </div>
+
+        <div class="ctrl">
+          <label>Sub Level
+            <span class="value" id="subVal">0.3</span>
+          </label>
+          <input id="subLevel"
+                 type="range"
+                 min="0" max="1" step="0.01" value="0.3"/>
+        </div>
+
+        <div class="ctrl">
+          <label>Noise Level
+            <span class="value" id="noiseVal">0.0</span>
+          </label>
+          <input id="noiseLevel"
+                 type="range"
+                 min="0" max="1" step="0.01" value="0"/>
+        </div>
+
+        <div class="ctrl">
+          <label>Drive
+            <span class="value" id="driveVal">1.0</span>
+          </label>
+          <input id="drive"
+                 type="range"
+                 min="0.5" max="4" step="0.1" value="1"/>
+        </div>
+
+        <div class="ctrl">
+          <label>Unison Detune
+            <span class="value" id="uniVal">0.00</span>
+          </label>
+          <input id="unisonDetune"
+                 type="range"
+                 min="0" max="30" step="0.5" value="0"/>
+        </div>
+
+        <div class="ctrl">
+          <label>Glide
+            <span class="value" id="glideVal">0.05s</span>
+          </label>
+          <input id="glide"
+                 type="range"
+                 min="0" max="0.5" step="0.01" value="0.05"/>
+        </div>
+
+        <div class="ctrl">
+          <label>Octave
+            <span class="value" id="octVal">0</span>
+          </label>
+          <input id="octave"
+                 type="range"
+                 min="-2" max="2" step="1" value="0"/>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- FILTER / MACRO / EG AMT -->
+    <div class="panel">
+      <h2>FILTER / MACRO / EG AMT</h2>
+      <div class="panelRow">
+
+        <div class="ctrl">
+          <label>Type</label>
+          <select id="filterType">
+            <option value="lowpass" selected>LP</option>
+            <option value="bandpass">BP</option>
+            <option value="highpass">HP</option>
+          </select>
+        </div>
+
+        <div class="ctrl">
+          <label>CUTOFF
+            <span class="value" id="cutVal">800Hz</span>
+          </label>
+          <input id="cutoff"
+                 type="range"
+                 min="100" max="5000" step="10" value="800"/>
+        </div>
+
+        <div class="ctrl">
+          <label>RESONANCE
+            <span class="value" id="resVal">5.0</span>
+          </label>
+          <input id="resonance"
+                 type="range"
+                 min="0" max="20" step="0.1" value="5"/>
+        </div>
+
+        <div class="ctrl">
+          <label>Filter EG Amt
+            <span class="value" id="fegVal">0.50</span>
+          </label>
+          <input id="filterEgAmt"
+                 type="range"
+                 min="0" max="2" step="0.01" value="0.5"/>
+        </div>
+
+        <div class="ctrl">
+          <label>Face Cutoff Boost
+            <span class="value" id="faceCutVal">800Hz</span>
+          </label>
+          <input id="faceCutBoost"
+                 type="range"
+                 min="0" max="2000" step="10" value="800"/>
+          <small style="opacity:.6;">move face left/right</small>
+        </div>
+
+        <div class="ctrl">
+          <label>Face Res Boost
+            <span class="value" id="faceResVal">5.0</span>
+          </label>
+          <input id="faceResBoost"
+                 type="range"
+                 min="0" max="15" step="0.1" value="5"/>
+          <small style="opacity:.6;">open mouth</small>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- AMP EG / LEVEL -->
+    <div class="panel">
+      <h2>AMP EG / LEVEL</h2>
+      <div class="panelRow">
+        <div class="ctrl">
+          <label>ATTACK
+            <span class="value" id="attVal">0.01s</span>
+          </label>
+          <input id="attack" type="range" min="0" max="1"
+                 step="0.01" value="0.01"/>
+        </div>
+        <div class="ctrl">
+          <label>DECAY
+            <span class="value" id="decVal">0.20s</span>
+          </label>
+          <input id="decay" type="range" min="0" max="1"
+                 step="0.01" value="0.2"/>
+        </div>
+        <div class="ctrl">
+          <label>SUSTAIN
+            <span class="value" id="susVal">0.70</span>
+          </label>
+          <input id="sustain" type="range" min="0" max="1"
+                 step="0.01" value="0.7"/>
+        </div>
+        <div class="ctrl">
+          <label>RELEASE
+            <span class="value" id="relVal">0.40s</span>
+          </label>
+          <input id="release" type="range" min="0" max="2"
+                 step="0.01" value="0.4"/>
+        </div>
+        <div class="ctrl">
+          <label>Amp Level
+            <span class="value" id="ampVal">0.60</span>
+          </label>
+          <input id="ampLevel"
+                 type="range"
+                 min="0" max="1" step="0.01" value="0.6"/>
+        </div>
+      </div>
+    </div>
+
+    <!-- LFOs -->
+    <div class="panel">
+      <h2>LFOs</h2>
+      <div class="panelRow">
+        <div class="ctrl">
+          <label>Filter LFO Rate
+            <span class="value" id="lfoRateVal">4Hz</span>
+          </label>
+          <input id="lfoRate"
+                 type="range"
+                 min="0.1" max="20" step="0.1" value="4"/>
+        </div>
+        <div class="ctrl">
+          <label>Filter LFO Depth
+            <span class="value" id="lfoDepthVal">500Hz</span>
+          </label>
+          <input id="lfoDepth"
+                 type="range"
+                 min="0" max="2000" step="10" value="500"/>
+        </div>
+        <div class="ctrl">
+          <label>Vibrato Rate
+            <span class="value" id="vibRateVal">5Hz</span>
+          </label>
+          <input id="vibRate"
+                 type="range"
+                 min="0.1" max="15" step="0.1" value="5"/>
+        </div>
+        <div class="ctrl">
+          <label>Vibrato Depth
+            <span class="value" id="vibDepthVal">10c</span>
+          </label>
+          <input id="vibDepth"
+                 type="range"
+                 min="0" max="100" step="1" value="10"/>
+        </div>
+      </div>
+    </div>
+
+    <!-- FX: DELAY -->
+    <div class="panel">
+      <h2>FX: DELAY</h2>
+      <div class="panelRow">
+        <div class="ctrl">
+          <label>Time
+            <span class="value" id="delayTimeVal">0.25s</span>
+          </label>
+          <input id="delayTime"
+                 type="range"
+                 min="0" max="1" step="0.01" value="0.25"/>
+        </div>
+        <div class="ctrl">
+          <label>Feedback
+            <span class="value" id="delayFbVal">0.3</span>
+          </label>
+          <input id="delayFb"
+                 type="range"
+                 min="0" max="0.95" step="0.01" value="0.3"/>
+        </div>
+        <div class="ctrl">
+          <label>Wet Mix
+            <span class="value" id="delayMixVal">0.4</span>
+          </label>
+          <input id="delayMix"
+                 type="range"
+                 min="0" max="1" step="0.01" value="0.4"/>
+        </div>
+      </div>
+    </div>
+
+    <!-- ARPEGG. -->
+    <div class="panel">
+      <h2>ARPEGG.</h2>
+      <div class="panelRow">
+
+        <div class="ctrl">
+          <label>On?</label>
+          <select id="arpOn">
+            <option value="off">Off</option>
+            <option value="on" selected>On</option>
+          </select>
+        </div>
+
+        <div class="ctrl">
+          <label>Pattern</label>
+          <select id="arpPattern">
+            <option value="up">Up</option>
+            <option value="down">Down</option>
+            <option value="updown">UpDown</option>
+            <option value="random">Random</option>
+          </select>
+        </div>
+
+        <div class="ctrl">
+          <label>Rate
+            <span class="value" id="arpRateVal">8n</span>
+          </label>
+          <input id="arpRate"
+                 type="range"
+                 min="1" max="20" step="1" value="8"/>
+          <small style="opacity:.6;">higher = faster</small>
+        </div>
+
+        <div class="ctrl">
+          <label>Span
+            <span class="value" id="arpSpanVal">4</span>
+          </label>
+          <input id="arpSpan"
+                 type="range"
+                 min="1" max="8" step="1" value="4"/>
+          <small style="opacity:.6;"># notes in cycle</small>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- libs -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  // we wrap EVERYTHING in try/catch and show fatal errors on-screen
+  const fatalOverlay = document.getElementById('fatalErrorOverlay');
+  function fatal(e){
+    console.error(e);
+    fatalOverlay.style.display='block';
+    fatalOverlay.textContent =
+      "FATAL JS ERROR:\n" + (e && e.message ? e.message : e);
+  }
+
+  try {
+
+    //////////////////////////
+    // GLOBAL STATE
+    //////////////////////////
+    const noteReadout = document.getElementById('noteReadout');
+    const camStatus   = document.getElementById('camStatus');
+    const videoEl     = document.getElementById('videoEl');
+    const handCanvas  = document.getElementById('handCanvas');
+    const ctx2d       = handCanvas.getContext('2d');
+
+    let audioCtx;
+    let osc1, osc2, subOsc, noiseNode;
+    let osc1Gain, osc2Gain, subGain, noiseGain, driveGain;
+    let filt;
+    let filterEgAmt = 0.5;
+    let filterType  = "lowpass";
+    let ampEnvGain, ampLevelNode;
+    let env = {attack:0.01, decay:0.2, sustain:0.7, release:0.4};
+    let finalGain;
+    let delayNode, delayFeedback, delayMixGain;
+    let lfoOsc, lfoGain;
+    let lfoRate = 4;
+    let lfoDepth = 500;
+    let vibLFO, vibLFODepthGain;
+    let currentFreq = 220;
+    let portamento = 0.05;
+    let octaveShift = 0;
+    let unisonDetune = 0;
+    let baseCutoff = 800;
+    let baseRes = 5;
+    let faceCutBoost = 800;
+    let faceResBoost = 5;
+    let faceXNorm = 0.5;
+    let mouthOpenNorm = 0;
+    let arpEnabled = true;
+    let arpPattern = "up";
+    let arpRateVal = 8;
+    let arpSpan = 4;
+    let arpStepIdx = 0;
+    let arpLastTime = 0;
+    let gateOn = false;
+    let lastGateTime = 0;
+
+    let handData=null;
+    let faceData=null;
+    let camStream=null;
+    let hands, faceMesh;
+    let animRunning = false;
+
+    //////////////////////////
+    // UTILS
+    //////////////////////////
+    function distance2D(ax,ay,bx,by){
+      const dx=ax-bx;
+      const dy=ay-by;
+      return Math.sqrt(dx*dx+dy*dy);
+    }
+    function resizeCanvas(){
+      const vw = videoEl.videoWidth || 640;
+      const vh = videoEl.videoHeight || 480;
+      handCanvas.width = vw;
+      handCanvas.height = vh;
+    }
+
+    //////////////////////////
+    // AUDIO INIT
+    //////////////////////////
+    function initAudio(){
+      if(audioCtx) return;
+      audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+
+      // osc1/2/sub/noise
+      osc1 = audioCtx.createOscillator();
+      osc1.type = "sawtooth";
+      osc1Gain = audioCtx.createGain();
+      osc1Gain.gain.value = 0.5;
+
+      osc2 = audioCtx.createOscillator();
+      osc2.type = "square";
+      osc2.detune.value = 5;
+      osc2Gain = audioCtx.createGain();
+      osc2Gain.gain.value = 0.5;
+
+      subOsc = audioCtx.createOscillator();
+      subOsc.type = "square";
+      subGain = audioCtx.createGain();
+      subGain.gain.value = 0.3;
+
+      const noiseBuffer = audioCtx.createBuffer(1, audioCtx.sampleRate*2, audioCtx.sampleRate);
+      const data = noiseBuffer.getChannelData(0);
+      for(let i=0;i<data.length;i++){
+        data[i]=(Math.random()*2-1)*0.4;
+      }
+      noiseNode = audioCtx.createBufferSource();
+      noiseNode.buffer = noiseBuffer;
+      noiseNode.loop = true;
+      noiseGain = audioCtx.createGain();
+      noiseGain.gain.value = 0.0;
+      noiseNode.connect(noiseGain);
+
+      // drive
+      driveGain = audioCtx.createGain();
+      driveGain.gain.value = 1.0;
+
+      // filter
+      filt = audioCtx.createBiquadFilter();
+      filt.type = "lowpass";
+      filt.frequency.value = baseCutoff;
+      filt.Q.value = baseRes;
+
+      // vibrato LFO
+      vibLFO = audioCtx.createOscillator();
+      vibLFO.type = "sine";
+      vibLFO.frequency.value = 5;
+      vibLFODepthGain = audioCtx.createGain();
+      vibLFODepthGain.gain.value = 10;
+      vibLFO.connect(vibLFODepthGain);
+      vibLFODepthGain.connect(osc1.detune);
+      vibLFODepthGain.connect(osc2.detune);
+
+      // filter LFO
+      lfoOsc = audioCtx.createOscillator();
+      lfoOsc.type = "sine";
+      lfoOsc.frequency.value = lfoRate;
+      lfoGain = audioCtx.createGain();
+      lfoGain.gain.value = lfoDepth;
+      lfoOsc.connect(lfoGain);
+      lfoGain.connect(filt.frequency);
+
+      // amp env / level
+      ampEnvGain = audioCtx.createGain();
+      ampEnvGain.gain.value = 0;
+      ampLevelNode = audioCtx.createGain();
+      ampLevelNode.gain.value = 0.6;
+
+      // delay
+      delayNode = audioCtx.createDelay(1.0);
+      delayNode.delayTime.value = 0.25;
+      delayFeedback = audioCtx.createGain();
+      delayFeedback.gain.value = 0.3;
+      delayMixGain = audioCtx.createGain();
+      delayMixGain.gain.value = 0.4;
+
+      // final out
+      finalGain = audioCtx.createGain();
+      finalGain.gain.value = 1.0;
+
+      // routing
+      osc1.connect(osc1Gain);
+      osc2.connect(osc2Gain);
+      subOsc.connect(subGain);
+      noiseGain.connect(driveGain);
+
+      osc1Gain.connect(driveGain);
+      osc2Gain.connect(driveGain);
+      subGain.connect(driveGain);
+
+      driveGain.connect(filt);
+      filt.connect(ampEnvGain);
+      ampEnvGain.connect(ampLevelNode);
+
+      ampEnvGain.connect(delayNode);
+      delayNode.connect(delayFeedback);
+      delayFeedback.connect(delayNode);
+      delayNode.connect(delayMixGain);
+      delayMixGain.connect(ampLevelNode);
+
+      ampLevelNode.connect(finalGain);
+      finalGain.connect(audioCtx.destination);
+
+      // start sources
+      osc1.frequency.value = currentFreq;
+      osc2.frequency.value = currentFreq;
+      subOsc.frequency.value = currentFreq/2;
+      osc1.start();
+      osc2.start();
+      subOsc.start();
+      vibLFO.start();
+      lfoOsc.start();
+      noiseNode.start();
+    }
+
+    //////////////////////////
+    // PROGRAM MACROS
+    //////////////////////////
+    const programs = {
+      bassGrowl: () => {
+        osc1.type = "sawtooth";
+        osc2.type = "square";
+        osc2.detune.value = -8;
+        osc1Gain.gain.value = 0.7;
+        osc2Gain.gain.value = 0.3;
+        subGain.gain.value = 0.5;
+        noiseGain.gain.value = 0.0;
+        driveGain.gain.value = 2.5;
+        baseCutoff = 500;
+        baseRes = 7;
+        filterType = "lowpass";
+        updateReadouts();
+      },
+      polySweep: () => {
+        osc1.type = "triangle";
+        osc2.type = "sawtooth";
+        osc2.detune.value = 6;
+        osc1Gain.gain.value = 0.5;
+        osc2Gain.gain.value = 0.5;
+        subGain.gain.value = 0.2;
+        noiseGain.gain.value = 0.1;
+        driveGain.gain.value = 1.0;
+        baseCutoff = 1200;
+        baseRes = 4;
+        filterType = "lowpass";
+        updateReadouts();
+      },
+      noisyLead: () => {
+        osc1.type = "square";
+        osc2.type = "square";
+        osc2.detune.value = 14;
+        osc1Gain.gain.value = 0.6;
+        osc2Gain.gain.value = 0.6;
+        subGain.gain.value = 0.1;
+        noiseGain.gain.value = 0.4;
+        driveGain.gain.value = 3.5;
+        baseCutoff = 2000;
+        baseRes = 10;
+        filterType = "bandpass";
+        updateReadouts();
+      }
+    };
+
+    function updateReadouts(){
+      document.getElementById('cutVal').textContent =
+        baseCutoff.toFixed(0)+"Hz";
+      document.getElementById('resVal').textContent =
+        baseRes.toFixed(1);
+      document.getElementById('fegVal').textContent =
+        filterEgAmt.toFixed(2);
+    }
+
+    //////////////////////////
+    // ENVELOPE GATE
+    //////////////////////////
+    function triggerGate(on){
+      if(!audioCtx || !ampEnvGain) return;
+      const now = audioCtx.currentTime;
+      if(on && !gateOn){
+        gateOn = true;
+        lastGateTime = now;
+        ampEnvGain.gain.cancelScheduledValues(now);
+        ampEnvGain.gain.setValueAtTime(0, now);
+        ampEnvGain.gain.linearRampToValueAtTime(1, now+env.attack);
+        ampEnvGain.gain.linearRampToValueAtTime(env.sustain,
+          now+env.attack+env.decay);
+      } else if(!on && gateOn){
+        gateOn = false;
+        ampEnvGain.gain.cancelScheduledValues(now);
+        ampEnvGain.gain.setValueAtTime(ampEnvGain.gain.value, now);
+        ampEnvGain.gain.linearRampToValueAtTime(0,
+          now+env.release);
+      }
+    }
+
+    //////////////////////////
+    // PITCH / ARP
+    //////////////////////////
+    function normToFreq(norm){
+      const inv = 1-norm;
+      const minF = 130.81;
+      const maxF = 1046.5;
+      let f = minF + (maxF-minF)*inv;
+      f *= Math.pow(2, octaveShift/12);
+      return f;
+    }
+    function setAllOscFreq(freq){
+      if(!audioCtx) return;
+      const now = audioCtx.currentTime;
+      const halfSpread = unisonDetune/2;
+      const osc1DetuneCents = -halfSpread;
+      const osc2DetuneCents = +halfSpread;
+
+      osc1.detune.setTargetAtTime(osc1DetuneCents, now, 0.02);
+      osc2.detune.setTargetAtTime(osc2DetuneCents, now, 0.02);
+
+      [osc1,osc2,subOsc].forEach((o,i)=>{
+        if(!o) return;
+        const t = (i===2) ? freq/2 : freq;
+        o.frequency.cancelScheduledValues(now);
+        o.frequency.setTargetAtTime(t, now, portamento);
+      });
+      currentFreq = freq;
+    }
+    function nextArpFreq(baseFreq){
+      const seq=[];
+      for(let i=0;i<arpSpan;i++) seq.push(i*2);
+      let idx;
+      switch(arpPattern){
+        case "down":
+          idx = (arpSpan-1) - (arpStepIdx % arpSpan);
+          break;
+        case "updown":{
+          const fullLen=(arpSpan*2)-2;
+          const pos=arpStepIdx % fullLen;
+          idx = pos<arpSpan ? pos : (fullLen-pos);
+          break;
+        }
+        case "random":
+          idx = Math.floor(Math.random()*arpSpan);
+          break;
+        case "up":
+        default:
+          idx = arpStepIdx % arpSpan;
+      }
+      const baseMidi = 69 + 12*Math.log2(baseFreq/440);
+      const semi = seq[idx] || 0;
+      const outMidi = baseMidi + semi;
+      const outFreq = 440*Math.pow(2,(outMidi-69)/12);
+      arpStepIdx++;
+      return outFreq;
+    }
+    function getArpStepTimeSeconds(){
+      return 1/(arpRateVal*0.5);
+    }
+
+    //////////////////////////
+    // FACE METRICS
+    //////////////////////////
+    function updateFaceMetrics(){
+      if(!faceData || !faceData.multiFaceLandmarks ||
+         !faceData.multiFaceLandmarks.length){
+        return;
+      }
+      const fl=faceData.multiFaceLandmarks[0];
+      const nose=fl[1];
+      faceXNorm = nose.x;
+
+      const topLip=fl[13];
+      const botLip=fl[14];
+      const chin=fl[152];
+      const brow=fl[10];
+      const lipDist = distance2D(topLip.x,topLip.y,botLip.x,botLip.y);
+      const faceH  = distance2D(chin.x,chin.y,brow.x,brow.y);
+      let openNorm = faceH>0 ? (lipDist/faceH)*3.0 : 0;
+      if(openNorm>1) openNorm=1;
+      mouthOpenNorm=openNorm;
+    }
+
+    //////////////////////////
+    // FILTER APPLY
+    //////////////////////////
+    function applyFilter(brightAmt,resAmt){
+      if(!audioCtx || !filt) return {cut:0,q:0};
+      // make sure filter type matches UI
+      filt.type = filterType;
+
+      let cut = baseCutoff + brightAmt*3000;
+      const faceCenter = faceXNorm-0.5;
+      cut += faceCenter * faceCutBoost * 2;
+      const egPeak = gateOn ? 1 : 0;
+      cut += egPeak * filterEgAmt * 1000;
+      if(cut<50) cut=50;
+      filt.frequency.setTargetAtTime(cut,
+        audioCtx.currentTime,0.05);
+
+      let q = 3 + resAmt*(20-3);
+      q += mouthOpenNorm * faceResBoost;
+      if(q<0.1) q=0.1;
+      filt.Q.setTargetAtTime(q,
+        audioCtx.currentTime,0.05);
+
+      return {cut,q};
+    }
+
+    //////////////////////////
+    // MAIN CONTROL UPDATE
+    //////////////////////////
+    function updateSynthFromHandAndFace(){
+      if(!audioCtx || !handData ||
+         !handData.multiHandLandmarks ||
+         !handData.multiHandLandmarks.length){
+        return;
+      }
+
+      const lm=handData.multiHandLandmarks[0];
+      const idxTip=lm[8];
+      const midTip=lm[12];
+      const thumbTip=lm[4];
+      const pinkyTip=lm[20];
+      const baseKnuckle=lm[9];
+
+      const pitchY=(idxTip.y+midTip.y)/2;
+      const baseFreq=normToFreq(pitchY);
+
+      const pinchDist=distance2D(thumbTip.x,thumbTip.y,idxTip.x,idxTip.y);
+      const isGate=(pinchDist<0.07);
+
+      const spreadDist=distance2D(idxTip.x,idxTip.y,pinkyTip.x,pinkyTip.y);
+      const brightnessNorm=Math.min(spreadDist*3,1);
+
+      const depthZ=baseKnuckle.z;
+      const dz=Math.max(Math.min(depthZ,0.05),-0.2);
+      const depthNorm=(0.05 - dz)/(0.25);
+
+      updateFaceMetrics();
+      const {cut,q}=applyFilter(brightnessNorm, depthNorm);
+
+      let playFreq=baseFreq;
+      const now=audioCtx.currentTime;
+      if(arpEnabled && isGate){
+        const stepDur=getArpStepTimeSeconds();
+        if(now-arpLastTime>stepDur){
+          arpLastTime=now;
+          playFreq=nextArpFreq(baseFreq);
+          setAllOscFreq(playFreq);
+        }
+      } else {
+        setAllOscFreq(baseFreq);
+      }
+
+      triggerGate(isGate);
+
+      noteReadout.innerText =
+        `NOTE:${playFreq.toFixed(1)}Hz gate:${isGate?"ON":"--"} cut:${cut.toFixed(0)}Hz Q:${q.toFixed(1)}`;
+    }
+
+    //////////////////////////
+    // DRAW OVERLAY
+    //////////////////////////
+    const HAND_CONNECTIONS=[
+      [0,1],[1,2],[2,3],[3,4],
+      [0,5],[5,6],[6,7],[7,8],
+      [5,9],[9,10],[10,11],[11,12],
+      [9,13],[13,14],[14,15],[15,16],
+      [13,17],[17,18],[18,19],[19,20],
+      [0,17]
+    ];
+
+    function drawOverlay(){
+      const w=handCanvas.width;
+      const h=handCanvas.height;
+      ctx2d.clearRect(0,0,w,h);
+
+      if(handData && handData.multiHandLandmarks &&
+         handData.multiHandLandmarks.length){
+        const lm=handData.multiHandLandmarks[0];
+        ctx2d.lineWidth=2;
+        ctx2d.strokeStyle=getComputedStyle(document.documentElement)
+          .getPropertyValue('--line');
+        ctx2d.beginPath();
+        HAND_CONNECTIONS.forEach(([a,b])=>{
+          const p1=lm[a]; const p2=lm[b];
+          ctx2d.moveTo(p1.x*w,p1.y*h);
+          ctx2d.lineTo(p2.x*w,p2.y*h);
+        });
+        ctx2d.stroke();
+
+        ctx2d.fillStyle="#000";
+        ctx2d.strokeStyle=getComputedStyle(document.documentElement)
+          .getPropertyValue('--danger');
+        lm.forEach(p=>{
+          ctx2d.beginPath();
+          ctx2d.arc(p.x*w,p.y*h,4,0,Math.PI*2);
+          ctx2d.fill();
+          ctx2d.stroke();
+        });
+      }
+
+      if(faceData && faceData.multiFaceLandmarks &&
+         faceData.multiFaceLandmarks.length){
+        const fl=faceData.multiFaceLandmarks[0];
+        const leftEyeX =(fl[33].x+fl[133].x)/2;
+        const leftEyeY =(fl[33].y+fl[133].y)/2;
+        const rightEyeX=(fl[362].x+fl[263].x)/2;
+        const rightEyeY=(fl[362].y+fl[263].y)/2;
+        ctx2d.fillStyle="rgba(0,255,200,0.6)";
+        ctx2d.beginPath();
+        ctx2d.arc(leftEyeX*w,leftEyeY*h,5,0,Math.PI*2);
+        ctx2d.fill();
+        ctx2d.beginPath();
+        ctx2d.arc(rightEyeX*w,rightEyeY*h,5,0,Math.PI*2);
+        ctx2d.fill();
+
+        const mouthTop=fl[13];
+        const mouthBot=fl[14];
+        ctx2d.strokeStyle="rgba(255,0,150,0.7)";
+        ctx2d.lineWidth=2;
+        ctx2d.beginPath();
+        ctx2d.moveTo(mouthTop.x*w,mouthTop.y*h);
+        ctx2d.lineTo(mouthBot.x*w,mouthBot.y*h);
+        ctx2d.stroke();
+
+        const nose=fl[1];
+        ctx2d.fillStyle="rgba(0,255,0,0.6)";
+        ctx2d.beginPath();
+        ctx2d.arc(nose.x*w,nose.y*h,4,0,Math.PI*2);
+        ctx2d.fill();
+      }
+    }
+
+    //////////////////////////
+    // UI BINDINGS
+    //////////////////////////
+    function hookupUI(){
+      const programSelect = document.getElementById('programSelect');
+
+      const osc1Wave = document.getElementById('osc1Wave');
+      const osc2Wave = document.getElementById('osc2Wave');
+      const osc2Detune = document.getElementById('osc2Detune');
+      const detuneVal = document.getElementById('detuneVal');
+      const oscMix = document.getElementById('oscMix');
+      const mixVal = document.getElementById('mixVal');
+      const subLevel = document.getElementById('subLevel');
+      const subVal = document.getElementById('subVal');
+      const noiseLevel = document.getElementById('noiseLevel');
+      const noiseVal = document.getElementById('noiseVal');
+      const drive = document.getElementById('drive');
+      const driveVal = document.getElementById('driveVal');
+      const unisonDetuneEl = document.getElementById('unisonDetune');
+      const uniVal = document.getElementById('uniVal');
+
+      const glide = document.getElementById('glide');
+      const glideVal = document.getElementById('glideVal');
+      const octave = document.getElementById('octave');
+      const octVal = document.getElementById('octVal');
+
+      const filterTypeSel = document.getElementById('filterType');
+      const cutoff = document.getElementById('cutoff');
+      const cutVal = document.getElementById('cutVal');
+      const resonance = document.getElementById('resonance');
+      const resVal = document.getElementById('resVal');
+      const filterEgAmtEl = document.getElementById('filterEgAmt');
+      const fegVal = document.getElementById('fegVal');
+      const faceCutBoostEl = document.getElementById('faceCutBoost');
+      const faceCutVal = document.getElementById('faceCutVal');
+      const faceResBoostEl = document.getElementById('faceResBoost');
+      const faceResVal = document.getElementById('faceResVal');
+
+      const attack = document.getElementById('attack');
+      const decay = document.getElementById('decay');
+      const sustain = document.getElementById('sustain');
+      const release = document.getElementById('release');
+      const attVal = document.getElementById('attVal');
+      const decVal = document.getElementById('decVal');
+      const susVal = document.getElementById('susVal');
+      const relVal = document.getElementById('relVal');
+      const ampLevel = document.getElementById('ampLevel');
+      const ampVal = document.getElementById('ampVal');
+
+      const lfoRateEl = document.getElementById('lfoRate');
+      const lfoRateValEl = document.getElementById('lfoRateVal');
+      const lfoDepthEl = document.getElementById('lfoDepth');
+      const lfoDepthValEl = document.getElementById('lfoDepthVal');
+      const vibRateEl = document.getElementById('vibRate');
+      const vibRateVal = document.getElementById('vibRateVal');
+      const vibDepthEl = document.getElementById('vibDepth');
+      const vibDepthVal = document.getElementById('vibDepthVal');
+
+      const arpOn = document.getElementById('arpOn');
+      const arpPatternSel = document.getElementById('arpPattern');
+      const arpRate = document.getElementById('arpRate');
+      const arpRateValSpan = document.getElementById('arpRateVal');
+      const arpSpanEl = document.getElementById('arpSpan');
+      const arpSpanValEl = document.getElementById('arpSpanVal');
+
+      if(programSelect){
+        programSelect.addEventListener('change',()=>{
+          const p = programSelect.value;
+          if(programs[p]) programs[p]();
+        });
+      }
+
+      if(osc1Wave){
+        osc1Wave.addEventListener('change',()=>{
+          if(osc1) osc1.type = osc1Wave.value;
+        });
+      }
+      if(osc2Wave){
+        osc2Wave.addEventListener('change',()=>{
+          if(osc2) osc2.type = osc2Wave.value;
+        });
+      }
+      if(osc2Detune){
+        osc2Detune.addEventListener('input',()=>{
+          const v=parseFloat(osc2Detune.value);
+          detuneVal.textContent=v+"c";
+          if(osc2) osc2.detune.value=v;
+        });
+      }
+      if(oscMix){
+        oscMix.addEventListener('input',()=>{
+          const v=parseFloat(oscMix.value);
+          mixVal.textContent=v.toFixed(2);
+          if(osc1Gain) osc1Gain.gain.value=1-v;
+          if(osc2Gain) osc2Gain.gain.value=v;
+        });
+      }
+      if(subLevel){
+        subLevel.addEventListener('input',()=>{
+          const v=parseFloat(subLevel.value);
+          subVal.textContent=v.toFixed(2);
+          if(subGain) subGain.gain.value=v;
+        });
+      }
+      if(noiseLevel){
+        noiseLevel.addEventListener('input',()=>{
+          const v=parseFloat(noiseLevel.value);
+          noiseVal.textContent=v.toFixed(2);
+          if(noiseGain) noiseGain.gain.value=v;
+        });
+      }
+      if(drive){
+        drive.addEventListener('input',()=>{
+          const v=parseFloat(drive.value);
+          driveVal.textContent=v.toFixed(1);
+          if(driveGain) driveGain.gain.value=v;
+        });
+      }
+      if(unisonDetuneEl){
+        unisonDetuneEl.addEventListener('input',()=>{
+          unisonDetune=parseFloat(unisonDetuneEl.value);
+          uniVal.textContent=unisonDetune.toFixed(2);
+        });
+      }
+
+      if(glide){
+        glide.addEventListener('input',()=>{
+          portamento=parseFloat(glide.value);
+          glideVal.textContent=portamento.toFixed(2)+"s";
+        });
+      }
+      if(octave){
+        octave.addEventListener('input',()=>{
+          const oct=parseInt(octave.value,10);
+          octVal.textContent=oct;
+          octaveShift=oct*12;
+        });
+      }
+
+      if(filterTypeSel){
+        filterTypeSel.addEventListener('change',()=>{
+          filterType=filterTypeSel.value;
+          if(filt) filt.type = filterType;
+        });
+      }
+      if(cutoff){
+        cutoff.addEventListener('input',()=>{
+          baseCutoff=parseFloat(cutoff.value);
+          cutVal.textContent=baseCutoff.toFixed(0)+"Hz";
+        });
+      }
+      if(resonance){
+        resonance.addEventListener('input',()=>{
+          baseRes=parseFloat(resonance.value);
+          resVal.textContent=baseRes.toFixed(1);
+        });
+      }
+      if(filterEgAmtEl){
+        filterEgAmtEl.addEventListener('input',()=>{
+          filterEgAmt=parseFloat(filterEgAmtEl.value);
+          fegVal.textContent=filterEgAmt.toFixed(2);
+        });
+      }
+      if(faceCutBoostEl){
+        faceCutBoostEl.addEventListener('input',()=>{
+          faceCutBoost=parseFloat(faceCutBoostEl.value);
+          faceCutVal.textContent=faceCutBoost.toFixed(0)+"Hz";
+        });
+      }
+      if(faceResBoostEl){
+        faceResBoostEl.addEventListener('input',()=>{
+          faceResBoost=parseFloat(faceResBoostEl.value);
+          faceResVal.textContent=faceResBoost.toFixed(1);
+        });
+      }
+
+      if(attack){
+        attack.addEventListener('input',()=>{
+          env.attack=parseFloat(attack.value);
+          attVal.textContent=env.attack.toFixed(2)+"s";
+        });
+      }
+      if(decay){
+        decay.addEventListener('input',()=>{
+          env.decay=parseFloat(decay.value);
+          decVal.textContent=env.decay.toFixed(2)+"s";
+        });
+      }
+      if(sustain){
+        sustain.addEventListener('input',()=>{
+          env.sustain=parseFloat(sustain.value);
+          susVal.textContent=env.sustain.toFixed(2);
+        });
+      }
+      if(release){
+        release.addEventListener('input',()=>{
+          env.release=parseFloat(release.value);
+          relVal.textContent=env.release.toFixed(2)+"s";
+        });
+      }
+      if(ampLevel){
+        ampLevel.addEventListener('input',()=>{
+          const v=parseFloat(ampLevel.value);
+          ampVal.textContent=v.toFixed(2);
+          if(ampLevelNode && audioCtx){
+            ampLevelNode.gain.setTargetAtTime(v,
+              audioCtx.currentTime,0.05);
+          }
+        });
+      }
+
+      if(lfoRateEl){
+        lfoRateEl.addEventListener('input',()=>{
+          lfoRate=parseFloat(lfoRateEl.value);
+          lfoRateValEl.textContent=lfoRate.toFixed(1)+"Hz";
+          if(lfoOsc && audioCtx){
+            lfoOsc.frequency.setTargetAtTime(lfoRate,
+              audioCtx.currentTime,0.05);
+          }
+        });
+      }
+      if(lfoDepthEl){
+        lfoDepthEl.addEventListener('input',()=>{
+          lfoDepth=parseFloat(lfoDepthEl.value);
+          lfoDepthValEl.textContent=lfoDepth.toFixed(0)+"Hz";
+          if(lfoGain && audioCtx){
+            lfoGain.gain.setTargetAtTime(lfoDepth,
+              audioCtx.currentTime,0.05);
+          }
+        });
+      }
+      if(vibRateEl){
+        vibRateEl.addEventListener('input',()=>{
+          const v=parseFloat(vibRateEl.value);
+          vibRateVal.textContent=v.toFixed(1)+"Hz";
+          if(vibLFO && audioCtx){
+            vibLFO.frequency.setTargetAtTime(v,
+              audioCtx.currentTime,0.05);
+          }
+        });
+      }
+      if(vibDepthEl){
+        vibDepthEl.addEventListener('input',()=>{
+          const v=parseFloat(vibDepthEl.value);
+          vibDepthVal.textContent=v+"c";
+          if(vibLFODepthGain && audioCtx){
+            vibLFODepthGain.gain.setTargetAtTime(v,
+              audioCtx.currentTime,0.05);
+          }
+        });
+      }
+
+      if(arpOn){
+        arpOn.addEventListener('change',()=>{
+          arpEnabled=(arpOn.value==="on");
+        });
+      }
+      if(arpPatternSel){
+        arpPatternSel.addEventListener('change',()=>{
+          arpPattern=arpPatternSel.value;
+        });
+      }
+      if(arpRate){
+        arpRate.addEventListener('input',()=>{
+          arpRateVal=parseFloat(arpRate.value);
+          arpRateValSpan.textContent=arpRateVal+"n";
+        });
+      }
+      if(arpSpanEl){
+        arpSpanEl.addEventListener('input',()=>{
+          arpSpan=parseInt(arpSpanEl.value,10);
+          arpSpanValEl.textContent=arpSpan;
+        });
+      }
+    }
+
+    //////////////////////////
+    // MEDIAPIPE SETUP
+    //////////////////////////
+    function setupHands(){
+      hands = new Hands({
+        locateFile:(file)=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+      });
+      hands.setOptions({
+        selfieMode:true,
+        maxNumHands:1,
+        modelComplexity:1,
+        minDetectionConfidence:0.5,
+        minTrackingConfidence:0.5
+      });
+      hands.onResults(results=>{
+        handData=results;
+      });
+    }
+    function setupFace(){
+      faceMesh = new FaceMesh({
+        locateFile:(file)=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+      });
+      faceMesh.setOptions({
+        selfieMode:true,
+        maxNumFaces:1,
+        refineLandmarks:true,
+        minDetectionConfidence:0.5,
+        minTrackingConfidence:0.5
+      });
+      faceMesh.onResults(results=>{
+        faceData=results;
+      });
+    }
+
+    //////////////////////////
+    // CAMERA START
+    //////////////////////////
+    async function startCamera(){
+      // guard: https / localhost needed on mobile for camera
+      if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+        camStatus.style.color = "#ff397a";
+        camStatus.textContent =
+          "CAMERA ERROR:\ngetUserMedia not supported.\nUse Chrome/Edge/Firefox/Safari.";
+        return false;
+      }
+
+      const tryConstraintsList = [
+        {
+          video:{
+            facingMode:"user",
+            width:{ideal:640},
+            height:{ideal:480}
+          },
+          audio:false
+        },
+        {
+          video:true,
+          audio:false
+        }
+      ];
+
+      for (let i=0;i<tryConstraintsList.length;i++){
+        try {
+          camStream = await navigator.mediaDevices.getUserMedia(tryConstraintsList[i]);
+          videoEl.srcObject = camStream;
+          videoEl.setAttribute("playsinline","true");
+          videoEl.muted = true;
+          const p = videoEl.play();
+          if(p && p.catch){ p.catch(()=>{}); }
+
+          await new Promise(resolve=>{
+            videoEl.onloadedmetadata = ()=>{
+              resizeCanvas();
+              resolve();
+            };
+          });
+
+          camStatus.style.color = "#39ffa8";
+          camStatus.textContent =
+            `CAMERA: active ✅
+${videoEl.videoWidth}x${videoEl.videoHeight}`;
+
+          return true;
+        } catch(err){
+          console.log("getUserMedia attempt failed:", err);
+          if(i === tryConstraintsList.length-1){
+            camStatus.style.color = "#ff397a";
+            camStatus.textContent =
+              "CAMERA ERROR:\n" + err.name + " / " + err.message +
+              "\nServe over http(s)/localhost instead of file://";
+            return false;
+          }
+        }
+      }
+    }
+
+    //////////////////////////
+    // MAIN LOOP
+    //////////////////////////
+    async function mainLoop(){
+      if(!animRunning) return;
+      if(videoEl.videoWidth>0 && videoEl.videoHeight>0){
+        if(hands)     { await hands.send({image:videoEl}); }
+        if(faceMesh)  { await faceMesh.send({image:videoEl}); }
+      }
+      drawOverlay();
+      updateSynthFromHandAndFace();
+      requestAnimationFrame(mainLoop);
+    }
+
+    //////////////////////////
+    // BOOTSTRAP
+    //////////////////////////
+    function boot(){
+      hookupUI();
+      setupHands();
+      setupFace();
+
+      const audioBtn=document.getElementById('audioBtn');
+      audioBtn.addEventListener('click', async ()=>{
+        initAudio();
+        if(audioCtx && audioCtx.state==="suspended"){
+          await audioCtx.resume();
+        }
+
+        const camOK = await startCamera();
+
+        // even if cam fails, we still run synth loop
+        animRunning = true;
+        mainLoop();
+      });
+
+      window.addEventListener('resize', resizeCanvas);
+    }
+
+    // run boot now that DOM is guaranteed ready
+    boot();
+
+  } catch(e){
+    fatal(e);
+  }
+});
+</script>
+</body>
+</html>
