@@ -1,7 +1,7 @@
 package com.akasha.kqilab;
 
 import android.Manifest;
-import android.app.Activity;
+import android.app.*;
 import android.bluetooth.*;
 import android.bluetooth.le.*;
 import android.content.*;
@@ -14,10 +14,14 @@ import java.util.*;
 
 public class MainActivity extends Activity {
     private static final int REQ_BT = 42;
-    private static final UUID NIU_SERVICE = UUID.fromString("8ec94e30-f315-4f60-9fb8-838830daea50");
     private static final UUID NIU_RX = UUID.fromString("8ec94e31-f315-4f60-9fb8-838830daea50");
     private static final UUID NIU_TX = UUID.fromString("8ec94e32-f315-4f60-9fb8-838830daea50");
     private static final UUID CCCD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
+
+    // Captured from the official NIU 5.12.2 app on this KQi 200.
+    private static final byte[] SPEED_19 = hexBytes("01 22 00 8E 9A 94 F6 34 0A 29 A7 58 F8 72 4D FF CC 73 EB 1B");
+    private static final byte[] SPEED_32 = hexBytes("01 22 00 4F D9 BB DB 2D 06 52 1A F4 C8 A8 8D 1B 59 87 5F CB");
+    private static final byte[] SPEED_ACK = hexBytes("01 A2 00 45 78 6A AF C7 E4 50 22 F3 EC 3D 55 C9 1D 80 B5 22");
 
     private BluetoothAdapter adapter;
     private BluetoothLeScanner scanner;
@@ -25,18 +29,25 @@ public class MainActivity extends Activity {
     private TextView log;
     private TextView status;
     private TextView protocolStatus;
+    private Button speed19Button;
+    private Button speed32Button;
+
     private final StringBuilder diagnostic = new StringBuilder();
     private final Map<String, BluetoothDevice> devices = new LinkedHashMap<>();
     private BluetoothGatt gatt;
     private BluetoothGattCharacteristic niuRx;
     private BluetoothGattCharacteristic niuTx;
     private int rxCount = 0;
+    private boolean autoConnectTriggered = false;
+    private boolean readyForCommands = false;
+    private String pendingReplay = null;
 
     private abstract static class GattOp {
         final String label;
         GattOp(String label) { this.label = label; }
         abstract boolean start(BluetoothGatt gatt);
     }
+
     private final ArrayDeque<GattOp> opQueue = new ArrayDeque<>();
     private boolean opBusy = false;
 
@@ -55,8 +66,8 @@ public class MainActivity extends Activity {
         root.setPadding(28,28,28,28);
         scroll.addView(root);
 
-        root.addView(text("KQi LAB v0.3", 28));
-        root.addView(text("NIU KQi BLE protocol capture + performance research", 14));
+        root.addView(text("KQi LAB v0.4", 28));
+        root.addView(text("NIU KQi 200 BLE protocol lab", 14));
 
         status = text("Status: ready", 16);
         status.setPadding(0,14,0,6);
@@ -66,12 +77,12 @@ public class MainActivity extends Activity {
         protocolStatus.setPadding(0,0,0,16);
         root.addView(protocolStatus);
 
-        TextView warning = text("This build does NOT transmit guessed speed commands. It first identifies the exact KQi protocol while preserving BMS, thermal, current and braking protections.", 14);
-        warning.setPadding(0,8,0,16);
-        root.addView(warning);
+        TextView finding = text("Protocol finding: 20-byte NIU frames use bytes 1–3 as a clear header, bytes 4–19 as a 16-byte opaque block, and byte 20 as an 8-bit additive checksum. E32 is phone→scooter; E31 is scooter→phone.", 14);
+        finding.setPadding(0,8,0,16);
+        root.addView(finding);
 
         Button scanBtn = new Button(this);
-        scanBtn.setText("SCAN FOR KQI / NIU");
+        scanBtn.setText("SCAN + AUTO-CONNECT NIU KQI");
         scanBtn.setOnClickListener(v -> startScan());
         root.addView(scanBtn);
 
@@ -79,6 +90,24 @@ public class MainActivity extends Activity {
         disconnectBtn.setText("DISCONNECT");
         disconnectBtn.setOnClickListener(v -> disconnect());
         root.addView(disconnectBtn);
+
+        TextView replayTitle = text("VERIFIED OFFICIAL REPLAY", 20);
+        replayTitle.setPadding(0,22,0,8);
+        root.addView(replayTitle);
+
+        root.addView(text("These two commands were captured from the official NIU app while changing Dynamic Mode from 19 km/h to 32 km/h. No guessed values are transmitted.", 14));
+
+        speed19Button = new Button(this);
+        speed19Button.setText("SET 19 KM/H — CAPTURED OFFICIAL");
+        speed19Button.setEnabled(false);
+        speed19Button.setOnClickListener(v -> confirmReplay("19 km/h", SPEED_19));
+        root.addView(speed19Button);
+
+        speed32Button = new Button(this);
+        speed32Button.setText("SET 32 KM/H — CAPTURED OFFICIAL");
+        speed32Button.setEnabled(false);
+        speed32Button.setOnClickListener(v -> confirmReplay("32 km/h", SPEED_32));
+        root.addView(speed32Button);
 
         Button markA = new Button(this);
         markA.setText("MARK CAPTURE A");
@@ -95,15 +124,10 @@ public class MainActivity extends Activity {
         exportBtn.setOnClickListener(v -> shareDiagnostics());
         root.addView(exportBtn);
 
-        TextView next = text("NEXT PROTOCOL STEP", 20);
-        next.setPadding(0,22,0,8);
-        root.addView(next);
-        root.addView(text("The KQi exposes E31 as READ+NOTIFY and E32 as READ+WRITE+WRITE_NO_RESPONSE. v0.3 prioritizes a proper E31 CCCD subscription before any reads. If the scooter only replies after commands, capture the official NIU app with Android Bluetooth HCI snoop logging while changing max speed between two known values; that lets us identify the exact E32 packet without guessing.", 14));
-
-        TextView perf = text("PERFORMANCE RESEARCH", 20);
-        perf.setPadding(0,22,0,8);
-        root.addView(perf);
-        root.addView(text("Goal: identify the genuine max-speed setting used by this KQi 200 firmware, then raise only that verified ceiling as far as the stock motor/controller/battery can support. No arbitrary 40-mph byte, no current-limit bypass, no cross-flashing.", 14));
+        TextView safety = text("TEST SAFETY", 20);
+        safety.setPadding(0,22,0,8);
+        root.addView(safety);
+        root.addView(text("Keep the scooter stationary while changing settings. This build does not alter BMS limits, controller current, thermal protection, brakes, firmware, or region data. The 19/32 km/h controls only replay frames already issued by the official NIU app.", 14));
 
         TextView found = text("DISCOVERED DEVICES", 20);
         found.setPadding(0,22,0,8);
@@ -152,6 +176,9 @@ public class MainActivity extends Activity {
         deviceList.removeAllViews();
         diagnostic.setLength(0);
         rxCount = 0;
+        autoConnectTriggered = false;
+        readyForCommands = false;
+        updateReplayButtons();
         status.setText("Status: scanning...");
         protocolStatus.setText("Protocol: waiting for KQi connection");
         append("Starting BLE scan...");
@@ -175,6 +202,12 @@ public class MainActivity extends Activity {
             b.setOnClickListener(v -> { b.setEnabled(false); connect(d); });
             deviceList.addView(b);
             diagnostic.append("SCAN ").append(name).append(" ").append(addr).append(" RSSI=").append(r.getRssi()).append("\n");
+
+            if (likely && !autoConnectTriggered) {
+                autoConnectTriggered = true;
+                append("Auto-connect candidate: "+name+" "+addr);
+                new Handler(Looper.getMainLooper()).postDelayed(() -> connect(d), 250);
+            }
         }
         @Override public void onScanFailed(int e) { append("Scan failed: "+e); }
     };
@@ -185,6 +218,8 @@ public class MainActivity extends Activity {
         if (gatt != null) disconnect();
         niuRx = null;
         niuTx = null;
+        readyForCommands = false;
+        updateReplayButtons();
         clearOps();
         status.setText("Status: connecting to " + d.getAddress());
         append("Connecting to "+d.getAddress());
@@ -193,6 +228,9 @@ public class MainActivity extends Activity {
 
     private void disconnect() {
         clearOps();
+        readyForCommands = false;
+        pendingReplay = null;
+        updateReplayButtons();
         if (gatt != null) {
             try { gatt.disconnect(); } catch(Exception ignored){}
             try { gatt.close(); } catch(Exception ignored){}
@@ -209,6 +247,8 @@ public class MainActivity extends Activity {
                 runOnUiThread(() -> status.setText("Status: connected; discovering services"));
                 try { g.discoverServices(); } catch(SecurityException e){ append(e.toString()); }
             } else if (state==BluetoothProfile.STATE_DISCONNECTED) {
+                readyForCommands = false;
+                updateReplayButtons();
                 runOnUiThread(() -> status.setText("Status: disconnected"));
                 clearOps();
             }
@@ -269,6 +309,12 @@ public class MainActivity extends Activity {
             }
         }
 
+        @Override public void onCharacteristicWrite(BluetoothGatt g, BluetoothGattCharacteristic c, int statusCode) {
+            append("WRITE_DONE "+c.getUuid()+" status="+statusCode);
+            diagnostic.append("WRITE_DONE ").append(c.getUuid()).append(" status=").append(statusCode).append("\n");
+            finishOp(g);
+        }
+
         @Override public void onCharacteristicChanged(BluetoothGatt g, BluetoothGattCharacteristic c, byte[] value) {
             recordRx(c, value);
         }
@@ -281,10 +327,71 @@ public class MainActivity extends Activity {
 
     private void recordRx(BluetoothGattCharacteristic c, byte[] value) {
         rxCount++;
-        String line = "RX#"+rxCount+" "+c.getUuid()+" "+hex(value);
+        boolean checksumOk = validChecksum(value);
+        String line = "RX#"+rxCount+" "+c.getUuid()+" "+hex(value)+" checksum="+(checksumOk?"OK":"BAD");
         append(line);
         diagnostic.append(line).append("\n");
-        runOnUiThread(() -> protocolStatus.setText("Protocol: E31 RX/notify active | E32 TX/write " + (niuTx != null ? "found" : "missing") + " | packets=" + rxCount));
+
+        if (pendingReplay != null) {
+            String label = pendingReplay;
+            if (Arrays.equals(value, SPEED_ACK)) {
+                append("ACK VERIFIED for "+label);
+                diagnostic.append("ACK_VERIFIED ").append(label).append("\n");
+                pendingReplay = null;
+                runOnUiThread(() -> Toast.makeText(this, label+" ACK verified", Toast.LENGTH_LONG).show());
+            } else if (value != null && value.length >= 2 && (value[0] & 0xff)==0x01 && (value[1] & 0xff)==0xA2) {
+                append("A2 response received for "+label+" but payload differs from capture");
+                diagnostic.append("ACK_A2_DIFFERENT ").append(label).append(" ").append(hex(value)).append("\n");
+                pendingReplay = null;
+            }
+        }
+
+        runOnUiThread(() -> protocolStatus.setText("Protocol: E31 active | E32 ready="+readyForCommands+" | RX packets=" + rxCount));
+    }
+
+    private void confirmReplay(String label, byte[] frame) {
+        if (!readyForCommands || gatt == null || niuTx == null) {
+            Toast.makeText(this,"Connect to the KQi first",Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (!validChecksum(frame)) {
+            append("REFUSED "+label+": local checksum failed");
+            return;
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle("Replay official "+label+" command?")
+                .setMessage("This is an exact frame captured from the official NIU app on your KQi 200. Keep the scooter stationary with the wheel clear. No current, BMS, thermal, braking, or firmware protections are changed.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Send", (d,w) -> queueReplay(label, frame))
+                .show();
+    }
+
+    private void queueReplay(String label, byte[] frame) {
+        if (gatt == null || niuTx == null) return;
+        pendingReplay = label;
+        byte[] copy = Arrays.copyOf(frame, frame.length);
+        append("TX_REPLAY "+label+" "+hex(copy)+" checksum=OK");
+        diagnostic.append("TX_REPLAY ").append(label).append(" ").append(hex(copy)).append("\n");
+
+        opQueue.addLast(new GattOp("write official "+label) {
+            @SuppressWarnings("deprecation")
+            @Override boolean start(BluetoothGatt gg) {
+                niuTx.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
+                niuTx.setValue(copy);
+                try { return gg.writeCharacteristic(niuTx); }
+                catch(SecurityException e) { append("Write denied: "+e); return false; }
+            }
+        });
+        startNextOp(gatt);
+
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            if (label.equals(pendingReplay)) {
+                append("ACK TIMEOUT for "+label);
+                diagnostic.append("ACK_TIMEOUT ").append(label).append("\n");
+                pendingReplay = null;
+            }
+        }, 2500);
     }
 
     private void queueNotify(BluetoothGatt g, BluetoothGattCharacteristic c, boolean priority) {
@@ -334,7 +441,9 @@ public class MainActivity extends Activity {
             append("GATT_OP not started: "+op.label);
             opBusy = false;
         }
-        append("GATT_OP queue complete");
+        readyForCommands = (niuRx != null && niuTx != null && gatt != null);
+        updateReplayButtons();
+        append("GATT_OP queue complete; commandReady="+readyForCommands);
     }
 
     private synchronized void finishOp(BluetoothGatt g) {
@@ -347,12 +456,33 @@ public class MainActivity extends Activity {
         opBusy = false;
     }
 
+    private void updateReplayButtons() {
+        runOnUiThread(() -> {
+            if (speed19Button != null) speed19Button.setEnabled(readyForCommands);
+            if (speed32Button != null) speed32Button.setEnabled(readyForCommands);
+        });
+    }
+
     private void mark(String label) {
         String stamp = new SimpleDateFormat("HH:mm:ss.SSS",Locale.US).format(new Date());
         String line = "MARK "+label+" "+stamp;
         diagnostic.append(line).append("\n");
         append(line);
         Toast.makeText(this, label+" marked", Toast.LENGTH_SHORT).show();
+    }
+
+    private static boolean validChecksum(byte[] frame) {
+        if (frame == null || frame.length < 2) return false;
+        int sum = 0;
+        for (int i=0;i<frame.length-1;i++) sum = (sum + (frame[i] & 0xff)) & 0xff;
+        return sum == (frame[frame.length-1] & 0xff);
+    }
+
+    private static byte[] hexBytes(String s) {
+        String[] parts = s.trim().split("\\s+");
+        byte[] out = new byte[parts.length];
+        for (int i=0;i<parts.length;i++) out[i]=(byte)Integer.parseInt(parts[i],16);
+        return out;
     }
 
     private String hex(byte[] b) {
@@ -369,8 +499,8 @@ public class MainActivity extends Activity {
     private void shareDiagnostics() {
         Intent i=new Intent(Intent.ACTION_SEND);
         i.setType("text/plain");
-        i.putExtra(Intent.EXTRA_SUBJECT,"KQi Lab v0.3 diagnostics");
-        i.putExtra(Intent.EXTRA_TEXT, "KQi Lab v0.3\n"+diagnostic+"\nLOG\n"+log.getText());
+        i.putExtra(Intent.EXTRA_SUBJECT,"KQi Lab v0.4 diagnostics");
+        i.putExtra(Intent.EXTRA_TEXT, "KQi Lab v0.4\n"+diagnostic+"\nLOG\n"+log.getText());
         startActivity(Intent.createChooser(i,"Share diagnostics"));
     }
 
