@@ -108,7 +108,8 @@ new_method = r'''    private void testAesCandidate() {
     }
 
     private static byte[] parseAesKey'''
-s2, n = pattern.subn(new_method, s, count=1)
+# Use a callable replacement so backslash escapes in the Java source are preserved verbatim.
+s2, n = pattern.subn(lambda m: new_method, s, count=1)
 if n != 1:
     raise SystemExit('failed to replace AES test method')
 s = s2
