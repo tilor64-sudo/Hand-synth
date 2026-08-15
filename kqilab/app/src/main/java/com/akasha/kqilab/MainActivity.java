@@ -9,8 +9,11 @@ import android.content.pm.PackageManager;
 import android.os.*;
 import android.provider.Settings;
 import android.widget.*;
+import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.*;
+import javax.crypto.Cipher;
+import javax.crypto.spec.SecretKeySpec;
 
 public class MainActivity extends Activity {
     private static final int REQ_BT = 42;
@@ -24,12 +27,18 @@ public class MainActivity extends Activity {
     private static final byte[] SPEED_32 = hexBytes("01 22 00 4F D9 BB DB 2D 06 52 1A F4 C8 A8 8D 1B 59 87 5F CB");
     private static final byte[] SPEED_ACK = hexBytes("01 A2 00 45 78 6A AF C7 E4 50 22 F3 EC 3D 55 C9 1D 80 B5 22");
 
+    // Deterministic Dynamic Mode A1 responses captured at known official settings.
+    private static final byte[] DYNAMIC_A1_19 = hexBytes("01 A1 00 07 89 0C 3B 57 2A 04 19 A8 4D B9 4C 1B BF DE 36 FF");
+    private static final byte[] DYNAMIC_A1_32 = hexBytes("01 A1 00 6C 5E BB 1C 17 22 36 4F DC 36 8A 81 96 6E BC FA D8");
+
     private BluetoothAdapter adapter;
     private BluetoothLeScanner scanner;
     private LinearLayout deviceList;
     private TextView log;
     private TextView status;
     private TextView protocolStatus;
+    private TextView aesResult;
+    private EditText aesCandidateInput;
     private Button dynamicReadButton;
     private Button speed19Button;
     private Button speed32Button;
@@ -46,6 +55,7 @@ public class MainActivity extends Activity {
     private boolean pendingDynamicRead = false;
     private int dynamicReadCount = 0;
     private byte[] previousDynamicResponse = null;
+    private String lastAesAnalysis = "No AES candidate tested yet.";
 
     private abstract static class GattOp {
         final String label;
@@ -71,8 +81,8 @@ public class MainActivity extends Activity {
         root.setPadding(28,28,28,28);
         scroll.addView(root);
 
-        root.addView(text("KQi LAB v0.5", 28));
-        root.addView(text("NIU KQi 200 BLE protocol lab", 14));
+        root.addView(text("KQi LAB v0.6", 28));
+        root.addView(text("NIU KQi 200 BLE + AES protocol lab", 14));
 
         status = text("Status: ready", 16);
         status.setPadding(0,14,0,6);
@@ -82,9 +92,48 @@ public class MainActivity extends Activity {
         protocolStatus.setPadding(0,0,0,16);
         root.addView(protocolStatus);
 
-        TextView finding = text("Confirmed protocol: E32 is phone→scooter, E31 is scooter→phone. NIU frames are 20 bytes: a 3-byte clear header, a 16-byte opaque block, then an additive 8-bit checksum. 0x22 sets Dynamic Mode; 0x21 requests the current Dynamic Mode configuration.", 14);
+        TextView finding = text("Confirmed: E32 is phone→scooter, E31 is scooter→phone. NIU frames are 20 bytes: 3-byte clear header, 16-byte encrypted block, additive checksum. XAPK analysis identifies AES/ECB/NoPadding for the 16-byte block. 0x22 sets Dynamic Mode; 0x21 reads it.", 14);
         finding.setPadding(0,8,0,16);
         root.addView(finding);
+
+        TextView aesTitle = text("OFFLINE AES KEY LAB", 20);
+        aesTitle.setPadding(0,18,0,8);
+        root.addView(aesTitle);
+        root.addView(text("Enter a suspected 16-character aesSecret (or 32 hex digits). Testing is local only: the candidate is never saved, logged, shared, or transmitted to the scooter. v0.6 decrypts our known 19/32 km/h SET and READBACK blocks and measures how structurally similar the plaintext becomes.", 14));
+
+        aesCandidateInput = new EditText(this);
+        aesCandidateInput.setHint("16-character aesSecret or 32 hex digits");
+        aesCandidateInput.setSingleLine(true);
+        aesCandidateInput.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        root.addView(aesCandidateInput);
+
+        Button testAesBtn = new Button(this);
+        testAesBtn.setText("TEST AES CANDIDATE — OFFLINE ONLY");
+        testAesBtn.setOnClickListener(v -> testAesCandidate());
+        root.addView(testAesBtn);
+
+        Button clearAesBtn = new Button(this);
+        clearAesBtn.setText("CLEAR CANDIDATE");
+        clearAesBtn.setOnClickListener(v -> {
+            aesCandidateInput.setText("");
+            aesResult.setText("AES analysis cleared.");
+            lastAesAnalysis = "AES analysis cleared.";
+        });
+        root.addView(clearAesBtn);
+
+        Button copyAesBtn = new Button(this);
+        copyAesBtn.setText("COPY AES ANALYSIS (KEY EXCLUDED)");
+        copyAesBtn.setOnClickListener(v -> {
+            ClipboardManager cm = (ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
+            cm.setPrimaryClip(ClipData.newPlainText("KQi Lab AES analysis", lastAesAnalysis));
+            Toast.makeText(this,"AES analysis copied — key excluded",Toast.LENGTH_SHORT).show();
+        });
+        root.addView(copyAesBtn);
+
+        aesResult = text("No AES candidate tested yet.", 12);
+        aesResult.setTextIsSelectable(true);
+        aesResult.setPadding(0,8,0,18);
+        root.addView(aesResult);
 
         Button scanBtn = new Button(this);
         scanBtn.setText("SCAN + AUTO-CONNECT NIU KQI");
@@ -99,7 +148,7 @@ public class MainActivity extends Activity {
         TextView queryTitle = text("OFFICIAL DYNAMIC-MODE QUERY", 20);
         queryTitle.setPadding(0,22,0,8);
         root.addView(queryTitle);
-        root.addView(text("This is the exact 0x21 request captured when the official NIU Dynamic Mode screen opened. It requests configuration; it does not change the speed setting.", 14));
+        root.addView(text("Exact 0x21 request captured from the official NIU app. It reads configuration and does not change the speed setting.", 14));
 
         dynamicReadButton = new Button(this);
         dynamicReadButton.setText("READ CURRENT DYNAMIC CONFIG — OFFICIAL 0x21");
@@ -110,8 +159,7 @@ public class MainActivity extends Activity {
         TextView replayTitle = text("VERIFIED OFFICIAL REPLAY", 20);
         replayTitle.setPadding(0,22,0,8);
         root.addView(replayTitle);
-
-        root.addView(text("These two 0x22 commands were captured from the official NIU app while changing Dynamic Mode from 19 km/h to 32 km/h. Both have already replayed successfully on this scooter with verified A2 acknowledgements.", 14));
+        root.addView(text("These 0x22 commands were captured from the official NIU app at 19 and 32 km/h and have replayed successfully with verified A2 acknowledgements. No new/guessed speed frame is generated in v0.6.", 14));
 
         speed19Button = new Button(this);
         speed19Button.setText("SET 19 KM/H — CAPTURED OFFICIAL");
@@ -124,11 +172,6 @@ public class MainActivity extends Activity {
         speed32Button.setEnabled(false);
         speed32Button.setOnClickListener(v -> confirmReplay("32 km/h", SPEED_32));
         root.addView(speed32Button);
-
-        TextView testTitle = text("RECOMMENDED v0.5 TEST", 20);
-        testTitle.setPadding(0,22,0,8);
-        root.addView(testTitle);
-        root.addView(text("1) Set 19 km/h and wait for ACK. 2) Read current Dynamic config. 3) Set 32 km/h and wait for ACK. 4) Read current Dynamic config again. v0.5 will automatically compare the two A1 response frames and list every changed byte.", 14));
 
         Button markA = new Button(this);
         markA.setText("MARK CAPTURE A");
@@ -148,7 +191,7 @@ public class MainActivity extends Activity {
         TextView safety = text("TEST SAFETY", 20);
         safety.setPadding(0,22,0,8);
         root.addView(safety);
-        root.addView(text("Keep the scooter stationary while changing settings. This build does not alter BMS limits, controller current, thermal protection, brakes, firmware, or region data. No above-stock value is generated or transmitted.", 14));
+        root.addView(text("Keep the scooter stationary while changing settings. This build does not alter BMS limits, controller current, thermal protection, brakes, firmware, or region data. AES candidate testing is completely offline.", 14));
 
         TextView found = text("DISCOVERED DEVICES", 20);
         found.setPadding(0,22,0,8);
@@ -171,6 +214,129 @@ public class MainActivity extends Activity {
         t.setText(s);
         t.setTextSize(sp);
         return t;
+    }
+
+    private void testAesCandidate() {
+        String candidate = aesCandidateInput.getText().toString();
+        try {
+            byte[] key = parseAesKey(candidate);
+            byte[] set19 = aesDecryptBlock(extractCipherBlock(SPEED_19), key);
+            byte[] set32 = aesDecryptBlock(extractCipherBlock(SPEED_32), key);
+            byte[] read19 = aesDecryptBlock(extractCipherBlock(DYNAMIC_A1_19), key);
+            byte[] read32 = aesDecryptBlock(extractCipherBlock(DYNAMIC_A1_32), key);
+
+            int setByteDiff = byteDiffCount(set19, set32);
+            int setBitDiff = bitDiffCount(set19, set32);
+            int readByteDiff = byteDiffCount(read19, read32);
+            int readBitDiff = bitDiffCount(read19, read32);
+            String setDiff = diffFrames(set19, set32);
+            String readDiff = diffFrames(read19, read32);
+            String patterns = speedPatternReport(set19, set32, read19, read32);
+
+            int structuralScore = setByteDiff + readByteDiff;
+            String verdict;
+            if (structuralScore <= 8) verdict = "STRONG CANDIDATE — plaintext pairs became highly similar";
+            else if (structuralScore <= 16) verdict = "INTERESTING CANDIDATE — inspect plaintext/diffs";
+            else if (structuralScore <= 24) verdict = "WEAK CANDIDATE";
+            else verdict = "UNLIKELY KEY — both pairs still show cipher-like avalanche";
+
+            lastAesAnalysis =
+                    "KQi Lab v0.6 AES candidate analysis (candidate key intentionally excluded)\n"+
+                    "Mode: AES/ECB/NoPadding\n"+
+                    "Verdict: "+verdict+"\n\n"+
+                    "SET 19 plaintext: "+hex(set19)+"\n"+
+                    "SET 32 plaintext: "+hex(set32)+"\n"+
+                    "SET difference: "+setByteDiff+"/16 bytes, "+setBitDiff+"/128 bits\n"+
+                    "SET diff detail: "+setDiff+"\n\n"+
+                    "READ 19 plaintext: "+hex(read19)+"\n"+
+                    "READ 32 plaintext: "+hex(read32)+"\n"+
+                    "READ difference: "+readByteDiff+"/16 bytes, "+readBitDiff+"/128 bits\n"+
+                    "READ diff detail: "+readDiff+"\n\n"+
+                    patterns;
+
+            aesResult.setText(lastAesAnalysis);
+            diagnostic.append("AES_TEST verdict=").append(verdict)
+                    .append(" setByteDiff=").append(setByteDiff)
+                    .append(" readByteDiff=").append(readByteDiff).append("\n");
+            Toast.makeText(this, verdict, Toast.LENGTH_LONG).show();
+        } catch (Exception e) {
+            String msg = "AES test failed: "+e.getMessage()+"\nUse exactly 16 UTF-8 bytes or exactly 32 hexadecimal digits.";
+            aesResult.setText(msg);
+            lastAesAnalysis = msg;
+            Toast.makeText(this,"Invalid AES candidate",Toast.LENGTH_SHORT).show();
+        } finally {
+            // Do not retain the candidate in the input field after testing.
+            aesCandidateInput.setText("");
+        }
+    }
+
+    private static byte[] parseAesKey(String raw) {
+        String s = raw == null ? "" : raw.trim();
+        if (s.matches("(?i)^[0-9a-f]{32}$")) {
+            byte[] out = new byte[16];
+            for (int i=0;i<16;i++) out[i]=(byte)Integer.parseInt(s.substring(i*2,i*2+2),16);
+            return out;
+        }
+        byte[] utf8 = s.getBytes(StandardCharsets.UTF_8);
+        if (utf8.length != 16) throw new IllegalArgumentException("candidate must encode to exactly 16 bytes");
+        return utf8;
+    }
+
+    private static byte[] extractCipherBlock(byte[] frame) {
+        if (frame == null || frame.length != 20) throw new IllegalArgumentException("expected 20-byte NIU frame");
+        return Arrays.copyOfRange(frame, 3, 19);
+    }
+
+    private static byte[] aesDecryptBlock(byte[] cipherBlock, byte[] key) throws Exception {
+        Cipher cipher = Cipher.getInstance("AES/ECB/NoPadding");
+        cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(key,"AES"));
+        return cipher.doFinal(cipherBlock);
+    }
+
+    private static int byteDiffCount(byte[] a, byte[] b) {
+        int n=Math.min(a.length,b.length), c=Math.abs(a.length-b.length);
+        for(int i=0;i<n;i++) if(a[i]!=b[i]) c++;
+        return c;
+    }
+
+    private static int bitDiffCount(byte[] a, byte[] b) {
+        int n=Math.min(a.length,b.length), c=8*Math.abs(a.length-b.length);
+        for(int i=0;i<n;i++) c += Integer.bitCount((a[i]^b[i]) & 0xff);
+        return c;
+    }
+
+    private static String speedPatternReport(byte[] set19, byte[] set32, byte[] read19, byte[] read32) {
+        StringBuilder s = new StringBuilder("PLAINTEXT SPEED-PATTERN SEARCH\n");
+        int hits=0;
+        hits += findPairPatterns(s,"SET",set19,set32);
+        hits += findPairPatterns(s,"READ",read19,read32);
+        if(hits==0) s.append("No direct 19→32 integer encoding found in decrypted blocks.\n");
+        else s.append("Pattern hits: ").append(hits).append("\n");
+        return s.toString();
+    }
+
+    private static int findPairPatterns(StringBuilder s, String label, byte[] a, byte[] b) {
+        int hits=0;
+        for(int i=0;i<16;i++) {
+            if((a[i]&0xff)==19 && (b[i]&0xff)==32) {
+                s.append(label).append(" byte[").append(i).append("] matches 19→32 directly\n"); hits++;
+            }
+        }
+        for(int i=0;i<=14;i++) {
+            int ale=(a[i]&0xff)|((a[i+1]&0xff)<<8), ble=(b[i]&0xff)|((b[i+1]&0xff)<<8);
+            int abe=((a[i]&0xff)<<8)|(a[i+1]&0xff), bbe=((b[i]&0xff)<<8)|(b[i+1]&0xff);
+            if(ale==19 && ble==32) { s.append(label).append(" uint16LE@").append(i).append(" matches 19→32\n"); hits++; }
+            if(abe==19 && bbe==32) { s.append(label).append(" uint16BE@").append(i).append(" matches 19→32\n"); hits++; }
+        }
+        for(int i=0;i<=12;i++) {
+            long ale=(a[i]&0xffL)|((a[i+1]&0xffL)<<8)|((a[i+2]&0xffL)<<16)|((a[i+3]&0xffL)<<24);
+            long ble=(b[i]&0xffL)|((b[i+1]&0xffL)<<8)|((b[i+2]&0xffL)<<16)|((b[i+3]&0xffL)<<24);
+            long abe=((a[i]&0xffL)<<24)|((a[i+1]&0xffL)<<16)|((a[i+2]&0xffL)<<8)|(a[i+3]&0xffL);
+            long bbe=((b[i]&0xffL)<<24)|((b[i+1]&0xffL)<<16)|((b[i+2]&0xffL)<<8)|(b[i+3]&0xffL);
+            if(ale==19 && ble==32) { s.append(label).append(" uint32LE@").append(i).append(" matches 19→32\n"); hits++; }
+            if(abe==19 && bbe==32) { s.append(label).append(" uint32BE@").append(i).append(" matches 19→32\n"); hits++; }
+        }
+        return hits;
     }
 
     private void ensurePermissions() {
@@ -588,7 +754,7 @@ public class MainActivity extends Activity {
         return out;
     }
 
-    private String hex(byte[] b) {
+    private static String hex(byte[] b) {
         if(b==null) return "";
         StringBuilder s=new StringBuilder();
         for(byte x:b) s.append(String.format(Locale.US,"%02X ",x));
@@ -602,8 +768,9 @@ public class MainActivity extends Activity {
     private void shareDiagnostics() {
         Intent i=new Intent(Intent.ACTION_SEND);
         i.setType("text/plain");
-        i.putExtra(Intent.EXTRA_SUBJECT,"KQi Lab v0.5 diagnostics");
-        i.putExtra(Intent.EXTRA_TEXT, "KQi Lab v0.5\n"+diagnostic+"\nLOG\n"+log.getText());
+        i.putExtra(Intent.EXTRA_SUBJECT,"KQi Lab v0.6 diagnostics");
+        i.putExtra(Intent.EXTRA_TEXT,
+                "KQi Lab v0.6\n"+diagnostic+"\nAES ANALYSIS (candidate key excluded)\n"+lastAesAnalysis+"\nLOG\n"+log.getText());
         startActivity(Intent.createChooser(i,"Share diagnostics"));
     }
 
