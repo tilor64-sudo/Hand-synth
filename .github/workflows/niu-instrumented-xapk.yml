@@ -1,0 +1,118 @@
+name: Build NIU AES Instrumented XAPK
+
+on:
+  push:
+    branches: [kqilab-build-20260815]
+    paths:
+      - 'kqilab/niu_instrument.py'
+      - '.github/workflows/niu-instrumented-xapk.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android build tools
+        run: sdkmanager 'build-tools;35.0.0'
+
+      - name: Download and verify NIU 5.12.2 XAPK
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 5 --retry-delay 2 \
+            'https://d.apkpure.net/b/XAPK/com.niu.manager?version=latest' \
+            -o NIU_5.12.2_APKPure.xapk
+          echo '005ca8099e7b90557bcf8127389f1a4ab418079bf6a1c2c502928dd9af53def7  NIU_5.12.2_APKPure.xapk' | sha256sum -c -
+          mkdir xapk
+          unzip -q NIU_5.12.2_APKPure.xapk -d xapk
+          test -f xapk/com.niu.manager.apk
+
+      - name: Download Apktool
+        run: |
+          curl -L --fail --retry 5 \
+            'https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar' \
+            -o apktool.jar
+          echo 'dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  apktool.jar' | sha256sum -c -
+
+      - name: Decode and instrument NIU base APK
+        run: |
+          set -euo pipefail
+          java -jar apktool.jar d -f xapk/com.niu.manager.apk -o niu_decoded
+          python kqilab/niu_instrument.py niu_decoded
+          java -jar apktool.jar b niu_decoded -o xapk/com.niu.manager.apk
+
+      - name: Re-sign base and split APKs together
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
+          keytool -genkeypair -noprompt \
+            -keystore kqilab-debug.keystore \
+            -storepass android -keypass android \
+            -alias kqilab -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname 'CN=KQi Lab, OU=Research, O=Akasha, L=Yukon, ST=Oklahoma, C=US'
+
+          for apk in xapk/*.apk; do
+            base="$(basename "$apk")"
+            aligned="xapk/.aligned-$base"
+            signed="xapk/.signed-$base"
+            "$BUILD_TOOLS/zipalign" -p -f 4 "$apk" "$aligned"
+            "$BUILD_TOOLS/apksigner" sign \
+              --ks kqilab-debug.keystore \
+              --ks-key-alias kqilab \
+              --ks-pass pass:android \
+              --key-pass pass:android \
+              --out "$signed" "$aligned"
+            "$BUILD_TOOLS/apksigner" verify --verbose "$signed"
+            mv "$signed" "$apk"
+            rm -f "$aligned"
+          done
+
+      - name: Package instrumented XAPK and guide
+        run: |
+          cat > INSTALL-INSTRUMENTED-NIU.txt <<'EOF'
+          NIU 5.12.2 - KQi AES instrumentation build
+
+          PURPOSE
+          This temporary research build logs the scooter-specific aesSecret under Android log tag:
+          KQiAES_CAPTURE
+
+          IMPORTANT
+          - It is re-signed with a research certificate, so Android will NOT install it over the official NIU app.
+          - Do NOT tap Unbind in NIU.
+          - Your vehicle binding lives on NIU's account/server side; this build is only for a temporary connection/log capture.
+          - After capture, reinstall the official NIU app from your normal source.
+
+          CAPTURE STEPS
+          1. Make sure you know your NIU account login before removing the official app.
+          2. Uninstall the official NIU app. Do NOT unbind the scooter first.
+          3. Install this XAPK with a split/XAPK installer.
+          4. Log into NIU and connect to the scooter.
+          5. Open Manage or Dynamic Mode once so BLE credentials are consumed.
+          6. Generate Android Developer options -> Take bug report.
+          7. Upload the bug-report ZIP to ChatGPT.
+          8. Reinstall the official NIU app afterward.
+
+          The aesSecret is a private device credential. Do not post the bug report publicly.
+          EOF
+
+          (cd xapk && zip -qr ../NIU-5.12.2-KQiAES-instrumented.xapk .)
+          sha256sum NIU-5.12.2-KQiAES-instrumented.xapk > NIU-5.12.2-KQiAES-instrumented.sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NIU-5.12.2-KQiAES-Instrumented
+          path: |
+            NIU-5.12.2-KQiAES-instrumented.xapk
+            NIU-5.12.2-KQiAES-instrumented.sha256.txt
+            INSTALL-INSTRUMENTED-NIU.txt
+          retention-days: 30
