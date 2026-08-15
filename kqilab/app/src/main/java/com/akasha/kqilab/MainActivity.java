@@ -19,6 +19,7 @@ public class MainActivity extends Activity {
     private static final UUID CCCD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
 
     // Captured from the official NIU 5.12.2 app on this KQi 200.
+    private static final byte[] DYNAMIC_READ = hexBytes("01 21 00 B5 D4 C0 99 F0 50 6C 4A 7C 5B 34 B0 0C BF 13 D4 67");
     private static final byte[] SPEED_19 = hexBytes("01 22 00 8E 9A 94 F6 34 0A 29 A7 58 F8 72 4D FF CC 73 EB 1B");
     private static final byte[] SPEED_32 = hexBytes("01 22 00 4F D9 BB DB 2D 06 52 1A F4 C8 A8 8D 1B 59 87 5F CB");
     private static final byte[] SPEED_ACK = hexBytes("01 A2 00 45 78 6A AF C7 E4 50 22 F3 EC 3D 55 C9 1D 80 B5 22");
@@ -29,6 +30,7 @@ public class MainActivity extends Activity {
     private TextView log;
     private TextView status;
     private TextView protocolStatus;
+    private Button dynamicReadButton;
     private Button speed19Button;
     private Button speed32Button;
 
@@ -41,6 +43,9 @@ public class MainActivity extends Activity {
     private boolean autoConnectTriggered = false;
     private boolean readyForCommands = false;
     private String pendingReplay = null;
+    private boolean pendingDynamicRead = false;
+    private int dynamicReadCount = 0;
+    private byte[] previousDynamicResponse = null;
 
     private abstract static class GattOp {
         final String label;
@@ -66,7 +71,7 @@ public class MainActivity extends Activity {
         root.setPadding(28,28,28,28);
         scroll.addView(root);
 
-        root.addView(text("KQi LAB v0.4", 28));
+        root.addView(text("KQi LAB v0.5", 28));
         root.addView(text("NIU KQi 200 BLE protocol lab", 14));
 
         status = text("Status: ready", 16);
@@ -77,7 +82,7 @@ public class MainActivity extends Activity {
         protocolStatus.setPadding(0,0,0,16);
         root.addView(protocolStatus);
 
-        TextView finding = text("Protocol finding: 20-byte NIU frames use bytes 1–3 as a clear header, bytes 4–19 as a 16-byte opaque block, and byte 20 as an 8-bit additive checksum. E32 is phone→scooter; E31 is scooter→phone.", 14);
+        TextView finding = text("Confirmed protocol: E32 is phone→scooter, E31 is scooter→phone. NIU frames are 20 bytes: a 3-byte clear header, a 16-byte opaque block, then an additive 8-bit checksum. 0x22 sets Dynamic Mode; 0x21 requests the current Dynamic Mode configuration.", 14);
         finding.setPadding(0,8,0,16);
         root.addView(finding);
 
@@ -91,11 +96,22 @@ public class MainActivity extends Activity {
         disconnectBtn.setOnClickListener(v -> disconnect());
         root.addView(disconnectBtn);
 
+        TextView queryTitle = text("OFFICIAL DYNAMIC-MODE QUERY", 20);
+        queryTitle.setPadding(0,22,0,8);
+        root.addView(queryTitle);
+        root.addView(text("This is the exact 0x21 request captured when the official NIU Dynamic Mode screen opened. It requests configuration; it does not change the speed setting.", 14));
+
+        dynamicReadButton = new Button(this);
+        dynamicReadButton.setText("READ CURRENT DYNAMIC CONFIG — OFFICIAL 0x21");
+        dynamicReadButton.setEnabled(false);
+        dynamicReadButton.setOnClickListener(v -> queueDynamicRead());
+        root.addView(dynamicReadButton);
+
         TextView replayTitle = text("VERIFIED OFFICIAL REPLAY", 20);
         replayTitle.setPadding(0,22,0,8);
         root.addView(replayTitle);
 
-        root.addView(text("These two commands were captured from the official NIU app while changing Dynamic Mode from 19 km/h to 32 km/h. No guessed values are transmitted.", 14));
+        root.addView(text("These two 0x22 commands were captured from the official NIU app while changing Dynamic Mode from 19 km/h to 32 km/h. Both have already replayed successfully on this scooter with verified A2 acknowledgements.", 14));
 
         speed19Button = new Button(this);
         speed19Button.setText("SET 19 KM/H — CAPTURED OFFICIAL");
@@ -108,6 +124,11 @@ public class MainActivity extends Activity {
         speed32Button.setEnabled(false);
         speed32Button.setOnClickListener(v -> confirmReplay("32 km/h", SPEED_32));
         root.addView(speed32Button);
+
+        TextView testTitle = text("RECOMMENDED v0.5 TEST", 20);
+        testTitle.setPadding(0,22,0,8);
+        root.addView(testTitle);
+        root.addView(text("1) Set 19 km/h and wait for ACK. 2) Read current Dynamic config. 3) Set 32 km/h and wait for ACK. 4) Read current Dynamic config again. v0.5 will automatically compare the two A1 response frames and list every changed byte.", 14));
 
         Button markA = new Button(this);
         markA.setText("MARK CAPTURE A");
@@ -127,7 +148,7 @@ public class MainActivity extends Activity {
         TextView safety = text("TEST SAFETY", 20);
         safety.setPadding(0,22,0,8);
         root.addView(safety);
-        root.addView(text("Keep the scooter stationary while changing settings. This build does not alter BMS limits, controller current, thermal protection, brakes, firmware, or region data. The 19/32 km/h controls only replay frames already issued by the official NIU app.", 14));
+        root.addView(text("Keep the scooter stationary while changing settings. This build does not alter BMS limits, controller current, thermal protection, brakes, firmware, or region data. No above-stock value is generated or transmitted.", 14));
 
         TextView found = text("DISCOVERED DEVICES", 20);
         found.setPadding(0,22,0,8);
@@ -176,9 +197,11 @@ public class MainActivity extends Activity {
         deviceList.removeAllViews();
         diagnostic.setLength(0);
         rxCount = 0;
+        dynamicReadCount = 0;
+        previousDynamicResponse = null;
         autoConnectTriggered = false;
         readyForCommands = false;
-        updateReplayButtons();
+        updateCommandButtons();
         status.setText("Status: scanning...");
         protocolStatus.setText("Protocol: waiting for KQi connection");
         append("Starting BLE scan...");
@@ -219,7 +242,7 @@ public class MainActivity extends Activity {
         niuRx = null;
         niuTx = null;
         readyForCommands = false;
-        updateReplayButtons();
+        updateCommandButtons();
         clearOps();
         status.setText("Status: connecting to " + d.getAddress());
         append("Connecting to "+d.getAddress());
@@ -230,7 +253,8 @@ public class MainActivity extends Activity {
         clearOps();
         readyForCommands = false;
         pendingReplay = null;
-        updateReplayButtons();
+        pendingDynamicRead = false;
+        updateCommandButtons();
         if (gatt != null) {
             try { gatt.disconnect(); } catch(Exception ignored){}
             try { gatt.close(); } catch(Exception ignored){}
@@ -248,7 +272,7 @@ public class MainActivity extends Activity {
                 try { g.discoverServices(); } catch(SecurityException e){ append(e.toString()); }
             } else if (state==BluetoothProfile.STATE_DISCONNECTED) {
                 readyForCommands = false;
-                updateReplayButtons();
+                updateCommandButtons();
                 runOnUiThread(() -> status.setText("Status: disconnected"));
                 clearOps();
             }
@@ -332,6 +356,22 @@ public class MainActivity extends Activity {
         append(line);
         diagnostic.append(line).append("\n");
 
+        if (value != null && value.length >= 2 && (value[0] & 0xff)==0x01 && (value[1] & 0xff)==0xA1) {
+            dynamicReadCount++;
+            append("DYNAMIC_A1 #"+dynamicReadCount+" "+hex(value));
+            diagnostic.append("DYNAMIC_A1 #").append(dynamicReadCount).append(" ").append(hex(value)).append("\n");
+            if (previousDynamicResponse != null) {
+                String diff = diffFrames(previousDynamicResponse, value);
+                append("DYNAMIC_DIFF previous→#"+dynamicReadCount+": "+diff);
+                diagnostic.append("DYNAMIC_DIFF previous_to_").append(dynamicReadCount).append(" ").append(diff).append("\n");
+            } else {
+                append("DYNAMIC_DIFF baseline stored");
+            }
+            previousDynamicResponse = Arrays.copyOf(value, value.length);
+            pendingDynamicRead = false;
+            runOnUiThread(() -> Toast.makeText(this,"Dynamic config response #"+dynamicReadCount+" captured",Toast.LENGTH_LONG).show());
+        }
+
         if (pendingReplay != null) {
             String label = pendingReplay;
             if (Arrays.equals(value, SPEED_ACK)) {
@@ -346,7 +386,45 @@ public class MainActivity extends Activity {
             }
         }
 
-        runOnUiThread(() -> protocolStatus.setText("Protocol: E31 active | E32 ready="+readyForCommands+" | RX packets=" + rxCount));
+        runOnUiThread(() -> protocolStatus.setText("Protocol: E31 active | E32 ready="+readyForCommands+" | RX=" + rxCount + " | dynamic reads="+dynamicReadCount));
+    }
+
+    private void queueDynamicRead() {
+        if (!readyForCommands || gatt == null || niuTx == null) {
+            Toast.makeText(this,"Connect to the KQi first",Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (pendingDynamicRead) {
+            Toast.makeText(this,"Dynamic read already pending",Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (!validChecksum(DYNAMIC_READ)) {
+            append("REFUSED dynamic read: local checksum failed");
+            return;
+        }
+        pendingDynamicRead = true;
+        byte[] copy = Arrays.copyOf(DYNAMIC_READ, DYNAMIC_READ.length);
+        append("TX_QUERY dynamic 0x21 "+hex(copy)+" checksum=OK");
+        diagnostic.append("TX_QUERY dynamic_0x21 ").append(hex(copy)).append("\n");
+
+        opQueue.addLast(new GattOp("write official dynamic read 0x21") {
+            @SuppressWarnings("deprecation")
+            @Override boolean start(BluetoothGatt gg) {
+                niuTx.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
+                niuTx.setValue(copy);
+                try { return gg.writeCharacteristic(niuTx); }
+                catch(SecurityException e) { append("Write denied: "+e); return false; }
+            }
+        });
+        startNextOp(gatt);
+
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            if (pendingDynamicRead) {
+                append("DYNAMIC_READ TIMEOUT");
+                diagnostic.append("DYNAMIC_READ_TIMEOUT\n");
+                pendingDynamicRead = false;
+            }
+        }, 2500);
     }
 
     private void confirmReplay(String label, byte[] frame) {
@@ -442,7 +520,7 @@ public class MainActivity extends Activity {
             opBusy = false;
         }
         readyForCommands = (niuRx != null && niuTx != null && gatt != null);
-        updateReplayButtons();
+        updateCommandButtons();
         append("GATT_OP queue complete; commandReady="+readyForCommands);
     }
 
@@ -456,8 +534,9 @@ public class MainActivity extends Activity {
         opBusy = false;
     }
 
-    private void updateReplayButtons() {
+    private void updateCommandButtons() {
         runOnUiThread(() -> {
+            if (dynamicReadButton != null) dynamicReadButton.setEnabled(readyForCommands);
             if (speed19Button != null) speed19Button.setEnabled(readyForCommands);
             if (speed32Button != null) speed32Button.setEnabled(readyForCommands);
         });
@@ -476,6 +555,30 @@ public class MainActivity extends Activity {
         int sum = 0;
         for (int i=0;i<frame.length-1;i++) sum = (sum + (frame[i] & 0xff)) & 0xff;
         return sum == (frame[frame.length-1] & 0xff);
+    }
+
+    private static String diffFrames(byte[] a, byte[] b) {
+        if (a == null || b == null) return "unavailable";
+        int n = Math.min(a.length, b.length);
+        StringBuilder s = new StringBuilder();
+        int changes = 0;
+        for (int i=0;i<n;i++) {
+            if (a[i] != b[i]) {
+                if (changes > 0) s.append(" | ");
+                s.append("[").append(i).append("] ")
+                        .append(String.format(Locale.US,"%02X",a[i] & 0xff))
+                        .append("→")
+                        .append(String.format(Locale.US,"%02X",b[i] & 0xff));
+                changes++;
+            }
+        }
+        if (a.length != b.length) {
+            if (changes > 0) s.append(" | ");
+            s.append("length ").append(a.length).append("→").append(b.length);
+            changes++;
+        }
+        if (changes == 0) return "NO CHANGES";
+        return changes+" change(s): "+s;
     }
 
     private static byte[] hexBytes(String s) {
@@ -499,8 +602,8 @@ public class MainActivity extends Activity {
     private void shareDiagnostics() {
         Intent i=new Intent(Intent.ACTION_SEND);
         i.setType("text/plain");
-        i.putExtra(Intent.EXTRA_SUBJECT,"KQi Lab v0.4 diagnostics");
-        i.putExtra(Intent.EXTRA_TEXT, "KQi Lab v0.4\n"+diagnostic+"\nLOG\n"+log.getText());
+        i.putExtra(Intent.EXTRA_SUBJECT,"KQi Lab v0.5 diagnostics");
+        i.putExtra(Intent.EXTRA_TEXT, "KQi Lab v0.5\n"+diagnostic+"\nLOG\n"+log.getText());
         startActivity(Intent.createChooser(i,"Share diagnostics"));
     }
 
