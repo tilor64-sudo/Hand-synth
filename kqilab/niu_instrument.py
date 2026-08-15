@@ -7,6 +7,11 @@ if len(sys.argv) != 2:
 
 root = Path(sys.argv[1])
 TAG = "KQiAES_CAPTURE"
+# Important: classes5.dex already contains 65,536 method IDs, the hard DEX limit.
+# We therefore MUST NOT add a new logging method reference such as android.util.Log.e.
+# com.niu.log.c->i(String,String) is already referenced in this DEX, so reusing it
+# adds only our tag string and no new method/type reference.
+LOGGER = "Lcom/niu/log/c;->i(Ljava/lang/String;Ljava/lang/String;)V"
 
 
 def locate(rel):
@@ -38,12 +43,12 @@ def patch_setter(path, method_sig):
     block, first_free = bump_locals(block, 1)
     insert = (
         f'    const-string v{first_free}, "{TAG}"\n'
-        f'    invoke-static {{v{first_free}, p1}}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;)I\n'
+        f'    invoke-static {{v{first_free}, p1}}, {LOGGER}\n'
     )
     block = re.sub(r"(?m)^(\s*\.locals\s+\d+\s*)$", r"\1\n" + insert.rstrip(), block, count=1)
     s = s[:m.start()] + block + s[m.end():]
     path.write_text(s)
-    print("patched setter", path, method_sig)
+    print("patched setter with existing NIU logger", path, method_sig)
 
 
 def patch_getter(path, method_sig):
@@ -56,19 +61,18 @@ def patch_getter(path, method_sig):
     if TAG in block:
         return
     block, first_free = bump_locals(block, 1)
-    # Getter is expected to load the aesSecret field into a local then return it.
     ret = re.search(r"(?m)^(\s*)return-object\s+(v\d+)\s*$", block)
     if not ret:
         raise SystemExit(f"return-object local not found in {method_sig}")
     indent, value_reg = ret.group(1), ret.group(2)
     log = (
         f'{indent}const-string v{first_free}, "{TAG}"\n'
-        f'{indent}invoke-static {{v{first_free}, {value_reg}}}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;)I\n'
+        f'{indent}invoke-static {{v{first_free}, {value_reg}}}, {LOGGER}\n'
     )
     block = block[:ret.start()] + log + block[ret.start():]
     s = s[:m.start()] + block + s[m.end():]
     path.write_text(s)
-    print("patched getter", path, method_sig)
+    print("patched getter with existing NIU logger", path, method_sig)
 
 
 ble = locate("com/niu/cloud/modules/carble/bean/BleConnectInfo.smali")
@@ -78,4 +82,4 @@ patch_setter(ble, "setAesSecret(Ljava/lang/String;)V")
 patch_getter(ble, "getAesSecret()Ljava/lang/String;")
 patch_getter(extdev, "getAesSecret()Ljava/lang/String;")
 
-print("NIU AES instrumentation patch complete")
+print("NIU AES instrumentation patch complete without adding a new method reference")
