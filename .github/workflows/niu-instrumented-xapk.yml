@@ -116,3 +116,5 @@ jobs:
             NIU-5.12.2-KQiAES-instrumented.sha256.txt
             INSTALL-INSTRUMENTED-NIU.txt
           retention-days: 30
+
+# trigger instrumented build
