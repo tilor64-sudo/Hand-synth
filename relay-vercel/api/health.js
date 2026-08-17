@@ -1,0 +1,8 @@
+export default function handler(req, res) {
+  res.setHeader('Cache-Control', 'no-store');
+  res.status(200).json({
+    ok: true,
+    service: 'Akasha Wrist Relay',
+    model: 'openai/gpt-5.6-sol'
+  });
+}
