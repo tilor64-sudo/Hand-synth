@@ -1,0 +1,33 @@
+name: Build Akasha Wrist APK
+
+on:
+  push:
+    branches: [akasha-wrist]
+    paths:
+      - 'akasha-wrist/**'
+      - '.github/workflows/build-akasha-wrist.yml'
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.2.1'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK 34
+        run: sdkmanager 'platforms;android-34' 'build-tools;34.0.0'
+      - name: Build debug APK
+        working-directory: akasha-wrist
+        run: gradle :app:assembleDebug --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AkashaWrist-v0.1-debug
+          path: akasha-wrist/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
